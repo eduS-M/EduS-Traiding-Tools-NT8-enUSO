@@ -52,28 +52,16 @@ Este sistema automatiza la extracción de datos fundamentales para que el trader
    ```bash
    pip install cloudscraper beautifulsoup4
 
-
-
 2. Ejecute el script antes de su sesión de trading:
    ```bash
    python EduS_News_Sync.py
 
-
 ----
-
 ## ⚖️ Descargo de Responsabilidad (Disclaimer)
 
 El contenido de este repositorio tiene fines puramente educativos y de herramientas de análisis. El trading de futuros y derivados conlleva un riesgo significativo. **El rendimiento pasado no garantiza resultados futuros.** No constituye asesoramiento financiero.
 
 ---
-
 **Desarrollado por EduS Day Trading** *Analista de Mercados con +20 años de experiencia.*
-
 ---
 
-### ¿Qué sigue ahora?
-Una vez que pegue y guarde el archivo:
-1.  Abra **GitHub Desktop**.
-2.  Verá el cambio en el `README.md`.
-3.  Escriba en el Summary: **"Finalización de documentación profesional del repositorio"**.
-4.  Haga clic en **Commit to main** y luego en **Push origin**.
