@@ -1,0 +1,23 @@
+Resumen Operativo (Rutina de Mesa de Dinero)
+Para mantener esta ventaja competitiva, le sugiero este flujo de trabajo semanal:
+
+Domingo por la noche:
+
+Abra el script EduS_News_Sync.py con el Bloc de Notas.
+Actualice la línea TARGET_URL con la semana que va a operar (o simular).
+Si la hora "Ajustada" no es la que usted quiere, cambie el número en la línea 26 (AJUSTE_HORARIO).
+Ejecute el script.
+
+Verificación Rápida:
+Mire la consola negra para confirmar que no hay errores de conexión.
+Abra NinjaTrader y verifique visualmente que las zonas rojas coincidan con los horarios esperados.
+Durante la Sesión:
+Confíe en las zonas visuales. Si ve una franja roja acercándose, cancele órdenes pendientes y espere a que pase la volatilidad.
+
+Gestor Inteligente:
+
+Agrupar: Detectar si hay varias noticias a la misma hora.
+Concatenar: Unir los títulos (CPI + Jobless + PPI).
+Jerarquizar: Decidir qué color pintar.
+Nota Técnica: Si ponemos "Rojo + Naranja" en la columna de Impacto, el indicador de NinjaTrader dejará de dibujar la zona (porque no sabrá si pintar rojo o naranja).
+Solución: El script calculará el "Impacto Dominante" para la columna de control (para que la zona se pinte del color más peligroso) y pondrá los detalles en el Título.
