@@ -416,3 +416,10 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+# Ignorar el archivo de salida de noticias en la carpeta de NinjaTrader
+**/Incoming/Noticias.csv
+
+# Ignorar carpetas de entorno virtual de Python
+venv/
+__pycache__/
+*.pyc
