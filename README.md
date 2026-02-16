@@ -52,10 +52,10 @@ Este sistema automatiza la extracción de datos fundamentales para que el trader
    ```bash
    pip install cloudscraper beautifulsoup4
 
-```
+
 
 2. Ejecute el script antes de su sesión de trading:
-bash
+```bash
 python EduS_News_Sync.py
 
 ---
