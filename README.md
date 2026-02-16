@@ -55,10 +55,11 @@ Este sistema automatiza la extracción de datos fundamentales para que el trader
 
 
 2. Ejecute el script antes de su sesión de trading:
-```bash
-python EduS_News_Sync.py
+   ```bash
+   python EduS_News_Sync.py
 
----
+
+----
 
 ## ⚖️ Descargo de Responsabilidad (Disclaimer)
 
