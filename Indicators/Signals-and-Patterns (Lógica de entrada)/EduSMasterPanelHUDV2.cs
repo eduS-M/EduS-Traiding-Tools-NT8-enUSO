@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.IO;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -36,7 +37,7 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
 {
     // ─── Enumeraciones ──────────────────────────────────────────
     internal enum MasterEstado_HUD2  { VerdeAlcista, VerdeBajista, AmarilloAlcista, AmarilloBajista, Rojo }
-    internal enum ZonaGrado_HUD2     { APlus, A, BPlus, B, Ninguna }
+    internal enum ZonaGrado_HUD2     { APlus, A, LRPlus, LR, BPlus, B, Ninguna }
 
     // ─── Snapshot calculo (hilo NT -> hilo UI) ──────────────────
     internal struct HudSnap2
@@ -57,6 +58,17 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
         public double           KTargetPts, KTargetTks, KTargetUsd;
         public double           KStopPct, KRR;
         public bool             MostrarSemaforo, MostrarSenales, MostrarEntrada, MostrarKeltner, MostrarPosicion;
+        // Ultima señal persistente
+        public bool             UltimaEntradaValida;   // hay al menos una señal guardada
+        public bool             UltimaEntradaActiva;   // sigue en verde ahora mismo
+        public string           UltimaFechaHora;       // timestamp de cuando se activó
+        public bool             UltimaEsAlcista;
+        public string           UltimaZonaLabel;       // A+, A, LR+, LR
+        public bool             UltimaEsZonaLR;        // true si la zona es LR o LR+
+        public double           UltimaEntrada, UltimaAVWAP, UltimaStop, UltimaStopPts;
+        public double           UltimaT1, UltimaT1Pts, UltimaRR1, UltimaT2, UltimaT2Pts, UltimaRR2;
+        public bool             LRsobreBM;             // Capa 4: LinReg89 vs BM Keltner
+        public double           LRVal2;                // valor LinReg89 para mostrar en señales Capa4
     }
 
     // ─── Snapshot posicion (timer -> hilo UI) ───────────────────
@@ -107,10 +119,12 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
         private StackPanel _spSemaforo, _spSenales, _spEntrada, _spKeltner, _spPosicion;
         private Border     _sep2, _sep3, _sep4, _sep5;
         private TextBlock  _tbHdr2;
-        private readonly Rectangle[]  _sigRect = new Rectangle[5];
-        private readonly TextBlock[]  _sigLbl  = new TextBlock[5];
-        private readonly TextBlock[]  _sigVal  = new TextBlock[5];
+        private readonly Rectangle[]  _sigRect = new Rectangle[6];
+        private readonly TextBlock[]  _sigLbl  = new TextBlock[6];
+        private readonly TextBlock[]  _sigVal  = new TextBlock[6];
         private TextBlock _tbEntrada, _tbAVWAP, _tbStop, _tbT1, _tbT2;
+        private TextBlock _tbAVWAPLbl;  // label dinamico "AVWAP:" / "LinReg:"
+        private TextBlock _tbEntradaBadge, _tbEntradaTS;
         private TextBlock _tbKWidthLbl, _tbKWidth, _tbKStopLbl, _tbKStop, _tbKTgtLbl, _tbKTgt;
         // ─── Posicion ─────────────────────────────────────────
         private TextBlock _tbPosDir;       // "LONG 2 @ 5234.00" | "No Position"
@@ -138,7 +152,7 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
             _tbTitle = Tb("EduS . ---", 12, FontWeights.Bold, C_TITLE);
             Grid.SetColumn(_tbTitle, 0);
             tRow.Children.Add(_tbTitle);
-            var tbTag = Tb("[HUD v2]", 9, FontWeights.Normal, C_V2TAG);
+            var tbTag = Tb("[HUD v3]", 9, FontWeights.Normal, C_V2TAG);
             tbTag.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(tbTag, 1);
             tRow.Children.Add(tbTag);
@@ -197,8 +211,8 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
             _tbHdr2 = Tb("-- Senales 4/4 . Zona -- --", 10, FontWeights.Bold, C_TITLE);
             _tbHdr2.TextAlignment = TextAlignment.Center;
             _spSenales.Children.Add(_tbHdr2);
-            string[] sNames = { "SMA 20", "SMA 80", "LinReg 89", "AVWAP", "AVWAP vs BM" };
-            for (int i = 0; i < 5; i++)
+            string[] sNames = { "SMA 20", "SMA 80", "LinReg 89", "AVWAP", "AVWAP vs BM", "LR89 vs BM" };
+            for (int i = 0; i < 6; i++)
             {
                 var row = new Grid { Margin = new Thickness(0,1,0,1) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
@@ -220,8 +234,16 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
             var hE = Tb("-- Zona Entrada (AVWAP) --", 10, FontWeights.Bold, C_TITLE);
             hE.TextAlignment = TextAlignment.Center;
             _spEntrada.Children.Add(hE);
+            // Fila: badge estado + timestamp
+            var badgeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0,2,0,2) };
+            _tbEntradaBadge = Tb("[ ACTIVA ]", 10, FontWeights.Bold, C_GREEN);
+            _tbEntradaBadge.Margin = new Thickness(0,0,8,0);
+            _tbEntradaTS = Tb("", 9, FontWeights.Normal, C_GRAY);
+            badgeRow.Children.Add(_tbEntradaBadge);
+            badgeRow.Children.Add(_tbEntradaTS);
+            _spEntrada.Children.Add(badgeRow);
             _tbEntrada = ERow(_spEntrada, "Entrada:", C_CYAN);
-            _tbAVWAP   = ERow(_spEntrada, "AVWAP:",   C_GRAY);
+            (_tbAVWAPLbl, _tbAVWAP) = ERow2(_spEntrada, "AVWAP:", C_GRAY);
             _tbStop    = ERow(_spEntrada, "Stop:",    C_RED);
             _tbT1      = ERow(_spEntrada, "T1:",      C_GREEN);
             _tbT2      = ERow(_spEntrada, "T2:",      C_ORANGE);
@@ -240,7 +262,8 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
         // ── Update semaforo + señales + entrada + keltner ────────
         public void Update(HudSnap2 s)
         {
-            bool showE = s.MostrarEntrada && s.EntradaValida;
+            // La seccion entrada ahora se muestra si hay alguna señal guardada (activa o historica)
+            bool showE = s.MostrarEntrada && s.UltimaEntradaValida;
 
             _spPosicion.Visibility = s.MostrarPosicion  ? Visibility.Visible : Visibility.Collapsed;
             _sep2.Visibility       = (s.MostrarPosicion && s.MostrarSemaforo) ? Visibility.Visible : Visibility.Collapsed;
@@ -295,22 +318,50 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                     _sigVal[i].Text       = (ups[i] ? "+ " : "- ") + vs[i].ToString("0.00");
                     _sigVal[i].Foreground = ups[i] ? C_GREEN : C_RED;
                 }
+                // Fila 4: AVWAP vs BM (Capa 3)
                 string bmLbl = s.VWAPUp ? "AVWAP > BM Kelt" : "AVWAP < BM Kelt";
                 _sigRect[4].Fill      = s.AVWAPsobreBM ? C_GREEN : C_YELLOW;
                 _sigLbl[4].Text       = bmLbl + (s.AVWAPsobreBM ? " OK" : " --");
                 _sigLbl[4].Foreground = s.AVWAPsobreBM ? C_GREEN : C_YELLOW;
                 _sigVal[4].Text       = "BM=" + s.KeltnerBM.ToString("0.00");
                 _sigVal[4].Foreground = C_GRAY;
+                // Fila 5: LR89 vs BM (Capa 4)
+                string lrBmLbl = s.LRUp ? "LR89 > BM Kelt" : "LR89 < BM Kelt";
+                _sigRect[5].Fill      = s.LRsobreBM ? C_GREEN : C_YELLOW;
+                _sigLbl[5].Text       = lrBmLbl + (s.LRsobreBM ? " OK" : " --");
+                _sigLbl[5].Foreground = s.LRsobreBM ? C_GREEN : C_YELLOW;
+                _sigVal[5].Text       = "LR=" + s.LRVal2.ToString("0.00");
+                _sigVal[5].Foreground = C_GRAY;
             }
 
             if (showE)
             {
-                bool alc = s.EntradaAlcista;
-                _tbEntrada.Text = s.Entrada.ToString("0.00");
-                _tbAVWAP.Text   = s.AVWAPprice.ToString("0.00") + "  " + (alc ? "(soporte)" : "(resist.)");
-                _tbStop.Text    = s.Stop.ToString("0.00") + "  (" + (alc ? "-" : "+") + s.StopPts.ToString("0.00") + " pts)";
-                _tbT1.Text      = s.T1.ToString("0.00") + "  (" + (alc ? "+" : "-") + s.T1Pts.ToString("0.00") + " pts)  R:R " + s.RR1.ToString("0.1");
-                _tbT2.Text      = s.T2.ToString("0.00") + "  (" + (alc ? "+" : "-") + s.T2Pts.ToString("0.00") + " pts)  R:R " + s.RR2.ToString("0.1");
+                // Badge: ACTIVA (verde) o HISTORICA (naranja/gris)
+                if (s.UltimaEntradaActiva)
+                {
+                    _tbEntradaBadge.Text       = "[ ACTIVA ]";
+                    _tbEntradaBadge.Foreground = C_GREEN;
+                    _tbEntradaTS.Foreground    = C_GRAY;
+                }
+                else
+                {
+                    _tbEntradaBadge.Text       = "[ HISTORICA ]";
+                    _tbEntradaBadge.Foreground = C_ORANGE;
+                    _tbEntradaTS.Foreground    = C_GRAY;
+                }
+                _tbEntradaTS.Text = s.UltimaFechaHora + "  [" + s.UltimaZonaLabel + "]";
+
+                bool alc      = s.UltimaEsAlcista;
+                bool esLR     = s.UltimaEsZonaLR;
+                string refSuf = esLR ? (alc ? " (soporte LR)" : " (resist. LR)") : (alc ? " (soporte)" : " (resist.)");
+                _tbAVWAPLbl.Text = esLR ? "LinReg:" : "AVWAP:";
+                _tbEntrada.Text = s.UltimaEntrada.ToString("0.00");
+                _tbAVWAP.Text   = s.UltimaAVWAP.ToString("0.00") + refSuf;
+                _tbStop.Text    = s.UltimaStop.ToString("0.00") + "  (" + (alc ? "-" : "+") + s.UltimaStopPts.ToString("0.00") + " pts)";
+                _tbT1.Text      = s.UltimaT1.ToString("0.00") + "  (" + (alc ? "+" : "-") + s.UltimaT1Pts.ToString("0.00") + " pts)  R:R " + s.UltimaRR1.ToString("0.1");
+                _tbT2.Text      = s.UltimaT2.ToString("0.00") + "  (" + (alc ? "+" : "-") + s.UltimaT2Pts.ToString("0.00") + " pts)  R:R " + s.UltimaRR2.ToString("0.1");
+                // Actualizar label de la fila AVWAP/LinReg segun zona
+                // (el label está en el texto fijo del ERow, lo sobreescribimos via tag)
             }
 
             if (s.MostrarKeltner)
@@ -407,6 +458,19 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
             return tV;
         }
 
+        private static (TextBlock lbl, TextBlock val) ERow2(StackPanel sp, string lbl, SolidColorBrush vc)
+        {
+            var row = new Grid { Margin = new Thickness(0,1,0,1) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var tL = Tb(lbl, 10, FontWeights.Normal, C_GRAY);
+            var tV = Tb("---", 10, FontWeights.Normal, vc);
+            Grid.SetColumn(tL, 0); Grid.SetColumn(tV, 1);
+            row.Children.Add(tL); row.Children.Add(tV);
+            sp.Children.Add(row);
+            return (tL, tV);
+        }
+
         private static (TextBlock lbl, TextBlock val) KRow(StackPanel sp, string lbl, SolidColorBrush vc)
         {
             var row = new Grid { Margin = new Thickness(0,1,0,1) };
@@ -443,6 +507,7 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
         private string         zonaLabel  = "--";
         private double         atrVal     = 0;
         private bool   v_avwapSobreBM = false;
+        private bool   v_lrSobreBM    = false;
         private double v_keltnerBM    = 0;
         private double k_bandWidth = 0, k_stopPts = 0, k_targetPts = 0;
         private double k_stopTks = 0, k_targetTks = 0, k_stopUsd = 0, k_targetUsd = 0;
@@ -473,14 +538,37 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
         private Account         _account;
         private DispatcherTimer _posTimer;
 
+        // ── Logging y V5 ─────────────────────────────────────
+        private bool   prevEntradaValida = false;
+        private string logDirectory;
+        private string logFilePath;
+        private readonly object logLock = new object();
+        private List<SignalActivo> señalesActivas = new List<SignalActivo>();
+        private int prevTendenciaCount = 0;
+        private ZonaGrado_HUD2 prevZona = ZonaGrado_HUD2.Ninguna;
+        private int barrasDesdeSenal = 0;
+        private bool senalPendiente = false;
+
+        // ── Ultima señal persistente (Opcion B) ─────────────────
+        private bool   _ultimaEntradaValida  = false;
+        private bool   _ultimaEsAlcista      = false;
+        private bool   _ultimaEsZonaLR       = false;
+        private string _ultimaFechaHora      = "";
+        private string _ultimaZonaLabel      = "";
+        private double _ultimaEntrada        = double.NaN;
+        private double _ultimaAVWAP          = double.NaN;
+        private double _ultimaStop           = double.NaN, _ultimaStopPts = 0;
+        private double _ultimaT1             = double.NaN, _ultimaT1Pts = 0, _ultimaRR1 = 0;
+        private double _ultimaT2             = double.NaN, _ultimaT2Pts = 0, _ultimaRR2 = 0;
+
         // ================================================================
         #region OnStateChange
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
             {
-                Description              = "EduS Master Panel HUD V2 -- ventana flotante con seccion de posicion en vivo.";
-                Name                     = "EduS_MasterPanel_HUD_V2";
+                Description              = "EduS Master Panel HUD V3 -- ventana flotante con seccion de posicion en vivo.";
+                Name                     = "EduS_MasterPanel_HUD_V3";
                 Calculate                = Calculate.OnBarClose;
                 IsOverlay                = true;
                 DisplayInDataBox         = false;
@@ -489,14 +577,29 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                 ScaleJustification       = ScaleJustification.Right;
 
                 Ventana_Flotante   = true;
-                Ventana_Compartida = false;
-                Hud_X              = 80;
-                Hud_Y              = 80;
+                Ventana_Compartida = true;
+                Hud_X              = 20;
+                Hud_Y              = 20;
                 Mostrar_En_Chart   = false;
 
                 Mostrar_Posicion   = true;
-                AccountName        = "";
+                AccountName        = "Sim101";
                 Pos_UpdateSeg      = 3;
+                RegistrarSenales   = true;
+                RutaLog            = @"C:\Users\eduar\OneDrive - Desarrollo Personal\Documents - Operativa Diaria\EduSTrader - Local Free";
+                NombreArchivoLog   = "senales-edus.csv";
+                LoggearHistorico   = false;
+                Alerta4de4         = true;
+                Sonido4de4         = "Alert1.wav";
+                AlertaZonaA        = true;
+                SonidoZonaA        = "Alert2.wav";
+                UsarCapa3          = false;
+                UsarCapa4          = false;
+                UsarStopKeltner    = true;
+                FiltroApertura     = true;
+                MinKeltnerVsATR    = 1.8;
+                EsperarConfirmacion= true;
+                BarrasConfirmacion = 2;
 
                 Mostrar_Semaforo   = true;
                 Mostrar_Senales    = true;
@@ -521,8 +624,8 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                 Kelt_RiskReward    = 2.0;
                 Kelt_Contracts     = 1;
 
-                Tamano_Bolas       = 20;
-                Fondo_Opacidad     = 40;
+                Tamano_Bolas       = 15;
+                Fondo_Opacidad     = 75;
                 Panel_Posicion     = 1;
                 Margen_Escala      = 70;
             }
@@ -545,6 +648,18 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
             {
                 string instr = Instrument != null ? Instrument.MasterInstrument.Name : "---";
                 _instrKey = instr;
+                if (RegistrarSenales)
+                {
+                    try
+                    {
+                        logDirectory = string.IsNullOrWhiteSpace(RutaLog) ? System.IO.Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "EduS_Logs") : RutaLog;
+                        System.IO.Directory.CreateDirectory(logDirectory);
+                        string fileName = string.IsNullOrWhiteSpace(NombreArchivoLog) ? "Senales_EduS.csv" : NombreArchivoLog;
+                        if (!fileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)) fileName += ".csv";
+                        logFilePath = System.IO.Path.Combine(logDirectory, fileName);
+                        lock (logLock) { if (!System.IO.File.Exists(logFilePath)) { System.IO.File.WriteAllText(logFilePath, "Tipo,SignalID,FechaHora,Mercado,Cuenta,Timeframe,Direccion,Estado,Zona,Entrada,Stop,T1,T2,RR1,RR2,FechaCierre,Resultado,T1_Tocado,PrecioSalida,BarrasDuracion" + Environment.NewLine); } }
+                    } catch { }
+                }
 
                 if (Ventana_Flotante)
                 {
@@ -767,18 +882,28 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                                   v_vwapVal = v_vwapUp ? avwap.VWAP_Up[0] : avwap.VWAP_Down[0]; }
             else                { v_vwapUp = false; v_vwapVal = Close[0]; }
 
-            // Capa 2
+            // Capa 2 — AVWAP zones (A+, A) y LinReg zones (LR+, LR)
             atrVal = Math.Max(atrInd[0], TickSize);
-            double vr = v_vwapVal, pr = Close[0];
-            double dA = Math.Abs(pr - vr) / atrVal;
-            bool pinL = v_vwapUp  && Low[0]  <= vr && pr > vr;
-            bool pinS = !v_vwapUp && High[0] >= vr && pr < vr;
-            bool lado = v_vwapUp ? (pr >= vr) : (pr <= vr);
-            if      (pinL || pinS)               { zonaActual = ZonaGrado_HUD2.APlus;   zonaLabel = "A+"; }
-            else if (lado  && dA <= ZoneVerde)   { zonaActual = ZonaGrado_HUD2.A;       zonaLabel = "A";  }
-            else if (!lado && dA <= ZoneVerde)   { zonaActual = ZonaGrado_HUD2.BPlus;   zonaLabel = "B+"; }
-            else if (lado  && dA <= ZoneAmarilla){ zonaActual = ZonaGrado_HUD2.B;       zonaLabel = "B";  }
-            else                                 { zonaActual = ZonaGrado_HUD2.Ninguna; zonaLabel = "--"; }
+            double vr  = v_vwapVal,  pr = Close[0];
+            double lr  = lr89[0];
+            double dA  = Math.Abs(pr - vr) / atrVal;
+            double dLR = Math.Abs(pr - lr)  / atrVal;
+            // AVWAP pins/side
+            bool pinL  = v_vwapUp  && Low[0]  <= vr && pr > vr;
+            bool pinS  = !v_vwapUp && High[0] >= vr && pr < vr;
+            bool ladoA = v_vwapUp ? (pr >= vr) : (pr <= vr);
+            // LinReg pins/side
+            bool pinLRL = v_lrUp  && Low[0]  <= lr && pr > lr;
+            bool pinLRS = !v_lrUp && High[0] >= lr && pr < lr;
+            bool ladoLR = v_lrUp  ? (pr >= lr) : (pr <= lr);
+
+            if      (pinL  || pinS)               { zonaActual = ZonaGrado_HUD2.APlus;   zonaLabel = "A+";  }
+            else if (ladoA  && dA  <= ZoneVerde)  { zonaActual = ZonaGrado_HUD2.A;       zonaLabel = "A";   }
+            else if (pinLRL || pinLRS)             { zonaActual = ZonaGrado_HUD2.LRPlus;  zonaLabel = "LR+"; }
+            else if (ladoLR && dLR <= ZoneVerde)  { zonaActual = ZonaGrado_HUD2.LR;      zonaLabel = "LR";  }
+            else if (!ladoA && dA  <= ZoneVerde)  { zonaActual = ZonaGrado_HUD2.BPlus;   zonaLabel = "B+";  }
+            else if (ladoA  && dA  <= ZoneAmarilla){ zonaActual = ZonaGrado_HUD2.B;      zonaLabel = "B";   }
+            else                                  { zonaActual = ZonaGrado_HUD2.Ninguna; zonaLabel = "--";  }
 
             // Keltner
             kDiff[0]    = High[0] - Low[0];
@@ -794,58 +919,116 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
             k_targetUsd  = k_targetPts * pv * Kelt_Contracts;
             v_keltnerBM  = kMid;
 
-            // Capa 3
+            // Capa 3: AVWAP vs BM Keltner
             v_avwapSobreBM = v_vwapUp ? (v_vwapVal > kMid) : (v_vwapVal < kMid);
+            // Capa 4: LinReg89 vs BM Keltner
+            v_lrSobreBM    = v_lrUp   ? (lr89[0]   > kMid) : (lr89[0]   < kMid);
 
             // Semaforo
-            bool a4a = v_sma20Up && v_sma80Up && v_lrUp && v_vwapUp;
+            bool a4a = v_sma20Up &&  v_sma80Up &&  v_lrUp &&  v_vwapUp;
             bool a4b = !v_sma20Up && !v_sma80Up && !v_lrUp && !v_vwapUp;
-            bool m3a = v_sma20Up && !v_sma80Up && v_lrUp && v_vwapUp;
+            bool m3a = v_sma20Up && !v_sma80Up &&  v_lrUp &&  v_vwapUp;
             bool m3b = !v_sma20Up && v_sma80Up && !v_lrUp && !v_vwapUp;
-            bool zA  = zonaActual == ZonaGrado_HUD2.APlus || zonaActual == ZonaGrado_HUD2.A;
-            bool zM  = zonaActual == ZonaGrado_HUD2.BPlus || zonaActual == ZonaGrado_HUD2.B;
-            if      (a4a && zA && v_avwapSobreBM) estadoActual = MasterEstado_HUD2.VerdeAlcista;
-            else if (a4b && zA && v_avwapSobreBM) estadoActual = MasterEstado_HUD2.VerdeBajista;
-            else if (a4a && zA)  estadoActual = MasterEstado_HUD2.AmarilloAlcista;
-            else if (a4b && zA)  estadoActual = MasterEstado_HUD2.AmarilloBajista;
-            else if (a4a && zM)  estadoActual = MasterEstado_HUD2.AmarilloAlcista;
-            else if (a4b && zM)  estadoActual = MasterEstado_HUD2.AmarilloBajista;
-            else if (m3a && zA)  estadoActual = MasterEstado_HUD2.AmarilloAlcista;
-            else if (m3b && zA)  estadoActual = MasterEstado_HUD2.AmarilloBajista;
-            else                 estadoActual = MasterEstado_HUD2.Rojo;
+
+            bool zA  = zonaActual == ZonaGrado_HUD2.APlus  || zonaActual == ZonaGrado_HUD2.A;
+            bool zLR = zonaActual == ZonaGrado_HUD2.LRPlus || zonaActual == ZonaGrado_HUD2.LR;
+            bool zM  = zonaActual == ZonaGrado_HUD2.BPlus  || zonaActual == ZonaGrado_HUD2.B;
+
+            // Confirmacion por zona: A/A+ usa Capa3, LR/LR+ usa Capa4
+            bool capa3Ok = !UsarCapa3 || v_avwapSobreBM;
+            bool capa4Ok = !UsarCapa4 || v_lrSobreBM;
+
+            bool verdeA  = a4a && zA  && capa3Ok;
+            bool verdeB  = a4b && zA  && capa3Ok;
+            bool verdeLRA = a4a && zLR && capa4Ok;
+            bool verdeLRB = a4b && zLR && capa4Ok;
+
+            if      (verdeA  || verdeLRA) estadoActual = MasterEstado_HUD2.VerdeAlcista;
+            else if (verdeB  || verdeLRB) estadoActual = MasterEstado_HUD2.VerdeBajista;
+            // Amarillo: 4/4 + zona premium sin capa, o 4/4 + zona B/B+, o 3/4 + cualquier zona premium
+            else if (a4a && zA)           estadoActual = MasterEstado_HUD2.AmarilloAlcista;
+            else if (a4b && zA)           estadoActual = MasterEstado_HUD2.AmarilloBajista;
+            else if (a4a && zLR)          estadoActual = MasterEstado_HUD2.AmarilloAlcista;
+            else if (a4b && zLR)          estadoActual = MasterEstado_HUD2.AmarilloBajista;
+            else if (a4a && zM)           estadoActual = MasterEstado_HUD2.AmarilloAlcista;
+            else if (a4b && zM)           estadoActual = MasterEstado_HUD2.AmarilloBajista;
+            else if (m3a && (zA || zLR))  estadoActual = MasterEstado_HUD2.AmarilloAlcista;
+            else if (m3b && (zA || zLR))  estadoActual = MasterEstado_HUD2.AmarilloBajista;
+            else                          estadoActual = MasterEstado_HUD2.Rojo;
 
             bool esAlc = v_vwapUp;
             tendenciaCount = (v_sma20Up == esAlc ? 1 : 0) + (v_sma80Up == esAlc ? 1 : 0)
                            + (v_lrUp    == esAlc ? 1 : 0) + 1;
 
-            // Zona Entrada
+            // Zona Entrada - V5 con Keltner y filtros
             bool esVerde = estadoActual == MasterEstado_HUD2.VerdeAlcista || estadoActual == MasterEstado_HUD2.VerdeBajista;
             double kUp = kMid + kOff, kLo = kMid - kOff;
-            if (esVerde)
+            
+            // V5: control de confirmación
+            if (esVerde) { if (!senalPendiente) { senalPendiente = true; barrasDesdeSenal = 0; } else { barrasDesdeSenal++; } }
+            else { senalPendiente = false; barrasDesdeSenal = 0; }
+            
+            bool pasaFiltroAncho = !FiltroApertura || (k_bandWidth >= MinKeltnerVsATR * atrVal);
+            bool pasaConfirmacion = !EsperarConfirmacion || (barrasDesdeSenal >= BarrasConfirmacion);
+            
+            if (esVerde && pasaFiltroAncho && pasaConfirmacion)
             {
                 bool alc = estadoActual == MasterEstado_HUD2.VerdeAlcista;
                 e_entrada = Close[0];
-                if (alc && !double.IsNaN(avwap.VWAP_Up[0]))
+                e_avwap = alc ? avwap.VWAP_Up[0] : avwap.VWAP_Down[0];
+                
+                // V5: Stop por Keltner (30%) o por ATR según propiedad
+                if (UsarStopKeltner)
                 {
-                    e_avwap = avwap.VWAP_Up[0];
-                    e_stop = e_avwap - atrVal * Stop_ATRMult;
-                    e_stopPts = Math.Max(0, e_entrada - e_stop);
-                    e_t1 = kUp; e_t1Pts = Math.Max(0, e_t1 - e_entrada);
-                    e_t2 = kUp + Math.Max(0, kUp - e_avwap); e_t2Pts = Math.Max(0, e_t2 - e_entrada);
+                    e_stopPts = k_stopPts; // ya es 30% del ancho
+                    e_stop = alc ? e_entrada - e_stopPts : e_entrada + e_stopPts;
+                    e_t1Pts = e_stopPts * 2.0; // RR 1:2
+                    e_t2Pts = e_stopPts * 3.0; // RR 1:3
+                    e_t1 = alc ? e_entrada + e_t1Pts : e_entrada - e_t1Pts;
+                    e_t2 = alc ? e_entrada + e_t2Pts : e_entrada - e_t2Pts;
                 }
-                else if (!alc && !double.IsNaN(avwap.VWAP_Down[0]))
+                else // lógica original ATR
                 {
-                    e_avwap = avwap.VWAP_Down[0];
-                    e_stop = e_avwap + atrVal * Stop_ATRMult;
-                    e_stopPts = Math.Max(0, e_stop - e_entrada);
-                    e_t1 = kLo; e_t1Pts = Math.Max(0, e_entrada - e_t1);
-                    e_t2 = kLo - Math.Max(0, e_avwap - kLo); e_t2Pts = Math.Max(0, e_entrada - e_t2);
+                    if (alc && !double.IsNaN(e_avwap)) { e_stop = e_avwap - atrVal * Stop_ATRMult; e_stopPts = Math.Max(0, e_entrada - e_stop); e_t1 = kUp; e_t1Pts = Math.Max(0, e_t1 - e_entrada); e_t2 = kUp + Math.Max(0, kUp - e_avwap); e_t2Pts = Math.Max(0, e_t2 - e_entrada); }
+                    else if (!alc && !double.IsNaN(e_avwap)) { e_stop = e_avwap + atrVal * Stop_ATRMult; e_stopPts = Math.Max(0, e_stop - e_entrada); e_t1 = kLo; e_t1Pts = Math.Max(0, e_entrada - e_t1); e_t2 = kLo - Math.Max(0, e_avwap - kLo); e_t2Pts = Math.Max(0, e_entrada - e_t2); }
+                    else { e_entrada = e_avwap = e_stop = e_t1 = e_t2 = double.NaN; e_stopPts = e_t1Pts = e_t2Pts = 0; }
                 }
-                else { e_entrada = e_avwap = e_stop = e_t1 = e_t2 = double.NaN; e_stopPts = e_t1Pts = e_t2Pts = e_rr1 = e_rr2 = 0; }
-                if (e_stopPts > ts) { e_rr1 = e_t1Pts / e_stopPts; e_rr2 = e_t2Pts / e_stopPts; }
-                else { e_rr1 = e_rr2 = 0; }
+                if (e_stopPts > ts) { e_rr1 = e_t1Pts / e_stopPts; e_rr2 = e_t2Pts / e_stopPts; } else { e_rr1 = e_rr2 = 0; }
             }
             else { e_entrada = e_avwap = e_stop = e_t1 = e_t2 = double.NaN; e_stopPts = e_t1Pts = e_t2Pts = e_rr1 = e_rr2 = 0; }
+
+            // ── LOGGING V5 ─────────────────────
+            bool puedeLoggear = RegistrarSenales && (State == State.Realtime || LoggearHistorico);
+            bool entradaAhora = esVerde && !double.IsNaN(e_entrada) && pasaFiltroAncho && pasaConfirmacion;
+            bool esNuevaSenal = entradaAhora && !prevEntradaValida;
+            if (puedeLoggear && esNuevaSenal) { try { LogSenalApertura(); } catch { } }
+            if (puedeLoggear && señalesActivas.Count > 0) { try { RevisarSenalesActivas(); } catch { } }
+
+            // ── GUARDAR ULTIMA SEÑAL PERSISTENTE ───────────────
+            if (esNuevaSenal)
+            {
+                _ultimaEntradaValida = true;
+                _ultimaEsAlcista     = estadoActual == MasterEstado_HUD2.VerdeAlcista;
+                _ultimaEsZonaLR      = zLR;
+                _ultimaFechaHora     = Time[0].ToString("dd/MM HH:mm");
+                _ultimaZonaLabel     = zonaLabel;
+                _ultimaEntrada       = e_entrada;
+                _ultimaAVWAP         = e_avwap;
+                _ultimaStop          = e_stop;   _ultimaStopPts = e_stopPts;
+                _ultimaT1            = e_t1;     _ultimaT1Pts   = e_t1Pts;   _ultimaRR1 = e_rr1;
+                _ultimaT2            = e_t2;     _ultimaT2Pts   = e_t2Pts;   _ultimaRR2 = e_rr2;
+            }
+            prevEntradaValida = entradaAhora;
+
+            // ── ALERTAS ─────────────────
+            if (State == State.Realtime)
+            {
+                if (Alerta4de4 && tendenciaCount == 4 && prevTendenciaCount < 4) { Alert("EduS_4de4", Priority.High, "4/4 Senales " + Instrument.FullName, Sonido4de4, 10, Brushes.Lime, Brushes.Black); }
+                bool esZonaA = (zonaActual == ZonaGrado_HUD2.APlus || zonaActual == ZonaGrado_HUD2.A);
+                bool eraZonaA = (prevZona == ZonaGrado_HUD2.APlus || prevZona == ZonaGrado_HUD2.A);
+                if (AlertaZonaA && esZonaA && !eraZonaA) { Alert("EduS_ZonaA", Priority.Medium, "Zona A " + Instrument.FullName + " [" + zonaLabel + "]", SonidoZonaA, 10, Brushes.Gold, Brushes.Black); }
+                prevTendenciaCount = tendenciaCount; prevZona = zonaActual;
+            }
 
             // Actualizar HUD (solo semaforo; posicion la actualiza el timer)
             if (Ventana_Flotante && _ownPanel != null && !_ownWindowClosed)
@@ -859,9 +1042,20 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
         }
         #endregion
 
+        
+        // V5: Clase para seguimiento de señales
+        private class SignalActivo
+        {
+            public string Id; public DateTime Apertura; public int BarraApertura; public string Mercado; public string Cuenta; public string Timeframe;
+            public bool EsLong; public string Estado; public string Zona; public double Entrada, Stop, T1, T2, RR1, RR2; public bool T1Tocado;
+        }
+        private void LogSenalApertura() { if (string.IsNullOrEmpty(logFilePath)) return; try { string id = Guid.NewGuid().ToString("N").Substring(0,8); bool esLong = estadoActual == MasterEstado_HUD2.VerdeAlcista; string direccion = esLong ? "LONG" : "SHORT"; string cuenta = string.IsNullOrWhiteSpace(AccountName) ? "N/A" : AccountName; string tf = BarsPeriod.Value + BarsPeriod.BarsPeriodType.ToString(); string fecha = Time[0].ToString("yyyy-MM-dd HH:mm:ss"); string mercado = Instrument != null ? Instrument.FullName : _instrKey; var s = new SignalActivo { Id = id, Apertura = Time[0], BarraApertura = CurrentBar, Mercado = mercado, Cuenta = cuenta, Timeframe = tf, EsLong = esLong, Estado = estadoActual.ToString(), Zona = zonaLabel, Entrada = e_entrada, Stop = e_stop, T1 = e_t1, T2 = e_t2, RR1 = e_rr1, RR2 = e_rr2, T1Tocado = false }; señalesActivas.Add(s); string linea = string.Format(System.Globalization.CultureInfo.InvariantCulture, "ABRE,{0},{1},{2},{3},{4},{5},{6},{7},{8:F4},{9:F4},{10:F4},{11:F4},{12:F2},{13:F2},,,,," , id, fecha, mercado, cuenta, tf, direccion, s.Estado, s.Zona, s.Entrada, s.Stop, s.T1, s.T2, s.RR1, s.RR2); lock (logLock) { System.IO.File.AppendAllText(logFilePath, linea + Environment.NewLine); } } catch { } }
+        private void RevisarSenalesActivas() { for (int i = señalesActivas.Count - 1; i >= 0; i--) { var s = señalesActivas[i]; bool cerrar = false; string resultado = ""; double precioSalida = 0; if (!s.T1Tocado) { if (s.EsLong && High[0] >= s.T1) s.T1Tocado = true; if (!s.EsLong && Low[0] <= s.T1) s.T1Tocado = true; } if (s.EsLong) { if (Low[0] <= s.Stop) { cerrar = true; resultado = "STOP"; precioSalida = s.Stop; } else if (High[0] >= s.T2) { cerrar = true; resultado = "T2"; precioSalida = s.T2; } } else { if (High[0] >= s.Stop) { cerrar = true; resultado = "STOP"; precioSalida = s.Stop; } else if (Low[0] <= s.T2) { cerrar = true; resultado = "T2"; precioSalida = s.T2; } } if (cerrar) { string fechaCierre = Time[0].ToString("yyyy-MM-dd HH:mm:ss"); int barras = CurrentBar - s.BarraApertura; string linea = string.Format(System.Globalization.CultureInfo.InvariantCulture, "CIERRA,{0},{1},{2},{3},{4},{5},{6},{7},{8:F4},{9:F4},{10:F4},{11:F4},{12:F2},{13:F2},{14},{15},{16},{17:F4},{18}", s.Id, s.Apertura.ToString("yyyy-MM-dd HH:mm:ss"), s.Mercado, s.Cuenta, s.Timeframe, s.EsLong ? "LONG" : "SHORT", s.Estado, s.Zona, s.Entrada, s.Stop, s.T1, s.T2, s.RR1, s.RR2, fechaCierre, resultado, s.T1Tocado ? "SI" : "NO", precioSalida, barras); lock (logLock) { System.IO.File.AppendAllText(logFilePath, linea + Environment.NewLine); } señalesActivas.RemoveAt(i); } } }
+
         private HudSnap2 BuildSnap2()
         {
             bool esV = estadoActual == MasterEstado_HUD2.VerdeAlcista || estadoActual == MasterEstado_HUD2.VerdeBajista;
+            bool entradaActiva = esV && !double.IsNaN(e_entrada);
             return new HudSnap2
             {
                 Instrumento = Instrument != null ? Instrument.MasterInstrument.Name : "---",
@@ -870,6 +1064,8 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                 SMA20Up = v_sma20Up, SMA80Up = v_sma80Up, LRUp = v_lrUp, VWAPUp = v_vwapUp,
                 SMA20Val = v_sma20Val, SMA80Val = v_sma80Val, LRVal = v_lrVal, VWAPVal = v_vwapVal,
                 AVWAPsobreBM = v_avwapSobreBM, KeltnerBM = v_keltnerBM,
+                LRsobreBM   = v_lrSobreBM,
+                LRVal2      = v_lrVal,
                 EntradaValida = esV && !double.IsNaN(e_entrada),
                 EntradaAlcista = estadoActual == MasterEstado_HUD2.VerdeAlcista,
                 Entrada = e_entrada, AVWAPprice = e_avwap, Stop = e_stop, StopPts = e_stopPts,
@@ -881,6 +1077,18 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                 MostrarSemaforo = Mostrar_Semaforo, MostrarSenales = Mostrar_Senales,
                 MostrarEntrada = Mostrar_Entrada, MostrarKeltner = Mostrar_Keltner,
                 MostrarPosicion = Mostrar_Posicion,
+                // Ultima señal persistente
+                UltimaEntradaValida = _ultimaEntradaValida,
+                UltimaEntradaActiva = entradaActiva,
+                UltimaFechaHora     = _ultimaFechaHora,
+                UltimaEsAlcista     = _ultimaEsAlcista,
+                UltimaZonaLabel     = _ultimaZonaLabel,
+                UltimaEsZonaLR      = _ultimaEsZonaLR,
+                UltimaEntrada       = _ultimaEntrada,
+                UltimaAVWAP         = _ultimaAVWAP,
+                UltimaStop          = _ultimaStop,   UltimaStopPts = _ultimaStopPts,
+                UltimaT1            = _ultimaT1,     UltimaT1Pts   = _ultimaT1Pts,   UltimaRR1 = _ultimaRR1,
+                UltimaT2            = _ultimaT2,     UltimaT2Pts   = _ultimaT2Pts,   UltimaRR2 = _ultimaRR2,
             };
         }
 
@@ -895,7 +1103,7 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                     _ownPanel  = new MasterHudPanel2();
                     _ownWindow = new System.Windows.Window
                     {
-                        Title = "EduS HUD v2 . " + instr, Content = _ownPanel,
+                        Title = "EduS HUD v3 . " + instr, Content = _ownPanel,
                         Background = MasterHudPanel2.C_BG,
                         SizeToContent = SizeToContent.WidthAndHeight,
                         ResizeMode = ResizeMode.CanMinimize, Topmost = true,
@@ -929,10 +1137,10 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                         };
                         s_sharedWindow = new System.Windows.Window
                         {
-                            Title = "EduS . Master HUD v2", Content = scroll,
+                            Title = "EduS Trader. Master HUD v3", Content = scroll,
                             Background = MasterHudPanel2.C_BG,
                             SizeToContent = SizeToContent.Width,
-                            MinHeight = 120, MaxHeight = 950,
+                            MinHeight = 120, MaxHeight = 1200,
                             ResizeMode = ResizeMode.CanResize, Topmost = true,
                             ShowInTaskbar = true, WindowStyle = WindowStyle.ToolWindow,
                             Left = Hud_X, Top = Hud_Y,
@@ -1046,9 +1254,11 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
 
             float pH = PAD_V + ROW_H + SEC_GAP;
             if (Mostrar_Semaforo) pH += ROW_H + diam + 4f + ROW_H + 2f + SEC_GAP;
-            if (Mostrar_Senales) { if (Mostrar_Semaforo) pH += ROW_H; pH += ROW_H + ROW_H * 5f + SEC_GAP; }
-            if (Mostrar_Entrada && esV) { if (Mostrar_Semaforo || Mostrar_Senales) pH += ROW_H; pH += ROW_H + ROW_H * 5f + SEC_GAP; }
-            if (Mostrar_Keltner) { if (Mostrar_Semaforo || Mostrar_Senales || (Mostrar_Entrada && esV)) pH += ROW_H; pH += ROW_H + ROW_H * 3f + SEC_GAP; }
+            if (Mostrar_Senales) { if (Mostrar_Semaforo) pH += ROW_H; pH += ROW_H + ROW_H * 6f + SEC_GAP; }
+            bool mostrarEntradaPanel = Mostrar_Entrada && _ultimaEntradaValida;
+            if (Mostrar_Entrada && esV) { if (Mostrar_Semaforo || Mostrar_Senales) pH += ROW_H; pH += ROW_H * 2f + ROW_H * 5f + SEC_GAP; }
+            else if (mostrarEntradaPanel) { if (Mostrar_Semaforo || Mostrar_Senales) pH += ROW_H; pH += ROW_H * 2f + ROW_H * 5f + SEC_GAP; }
+            if (Mostrar_Keltner) { if (Mostrar_Semaforo || Mostrar_Senales || mostrarEntradaPanel) pH += ROW_H; pH += ROW_H + ROW_H * 3f + SEC_GAP; }
             pH += PAD_V;
 
             float cW = (float)cc.ActualWidth, cH = (float)cs.Height, eO = (float)Margen_Escala;
@@ -1116,25 +1326,42 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                 Tx(bmL+(v_avwapSobreBM?" OK":" --"), fmtNormal, bmB, px+PAD_H+8f, cy, 110f, ROW_H);
                 SA(fmtMono, SharpDX.DirectWrite.TextAlignment.Trailing);
                 Tx("BM="+v_keltnerBM.ToString("0.00"), fmtMono, dxGris, cvx, cy, 88f, ROW_H);
+                SA(fmtMono, SharpDX.DirectWrite.TextAlignment.Leading); cy += ROW_H;
+                // Capa 4: LinReg89 vs BM Keltner
+                string lrBmL = v_lrUp ? "LR89 > BM Kelt" : "LR89 < BM Kelt";
+                SharpDX.Direct2D1.Brush lrBmB = v_lrSobreBM ? dxVerde : dxAmarillo;
+                RenderTarget.FillRectangle(new SharpDX.RectangleF(px+PAD_H, cy+ROW_H/2f-4f, 5f, 8f), lrBmB);
+                Tx(lrBmL+(v_lrSobreBM?" OK":" --"), fmtNormal, lrBmB, px+PAD_H+8f, cy, 110f, ROW_H);
+                SA(fmtMono, SharpDX.DirectWrite.TextAlignment.Trailing);
+                Tx("LR="+v_lrVal.ToString("0.00"), fmtMono, dxGris, cvx, cy, 88f, ROW_H);
                 SA(fmtMono, SharpDX.DirectWrite.TextAlignment.Leading); cy += ROW_H + SEC_GAP;
             }
 
-            if (Mostrar_Entrada && esV && !double.IsNaN(e_entrada))
+            if (mostrarEntradaPanel)
             {
                 if (Mostrar_Semaforo || Mostrar_Senales) { Sp(px+PAD_H, cy); cy += ROW_H; }
-                bool alc = estadoActual == MasterEstado_HUD2.VerdeAlcista;
-                Hd("-- Zona Entrada (AVWAP) --"); cy += ROW_H;
-                ER("Entrada:", e_entrada.ToString("0.00"), dxCian); cy += ROW_H;
-                if (!double.IsNaN(e_avwap)) { ER("AVWAP:", e_avwap.ToString("0.00")+(alc?" (soporte)":" (resist.)"), dxGris); cy += ROW_H; }
-                if (!double.IsNaN(e_stop))  { ER("Stop:",  e_stop.ToString("0.00")+"  ("+(alc?"-":"+")+e_stopPts.ToString("0.00")+" pts)", dxRojo); cy += ROW_H; }
-                if (!double.IsNaN(e_t1))    { ER("T1:", e_t1.ToString("0.00")+"  ("+(alc?"+":"-")+e_t1Pts.ToString("0.00")+" pts)  R:R "+e_rr1.ToString("0.1"), dxVerde); cy += ROW_H; }
-                if (!double.IsNaN(e_t2))    { ER("T2:", e_t2.ToString("0.00")+"  ("+(alc?"+":"-")+e_t2Pts.ToString("0.00")+" pts)  R:R "+e_rr2.ToString("0.1"), dxNaranja); cy += ROW_H; }
+                bool alc   = _ultimaEsAlcista;
+                bool esLR  = _ultimaEsZonaLR;
+                string refLblDx = esLR ? "LinReg:" : "AVWAP:";
+                string refSufDx = esLR ? (alc ? " (soporte LR)" : " (resist. LR)") : (alc ? " (soporte)" : " (resist.)");
+                Hd("-- Zona Entrada [" + _ultimaZonaLabel + "] --"); cy += ROW_H;
+                // Badge ACTIVA / HISTORICA + timestamp
+                bool activa = esV && !double.IsNaN(e_entrada);
+                string badgeTxt = (activa ? "[ ACTIVA ]" : "[ HISTORICA ]") + "  " + _ultimaFechaHora + "  [" + _ultimaZonaLabel + "]";
+                SharpDX.Direct2D1.Brush badgeBrush = activa ? dxVerde : dxNaranja;
+                SA(fmtNormal, SharpDX.DirectWrite.TextAlignment.Center);
+                Tx(badgeTxt, fmtNormal, badgeBrush, px+PAD_H, cy, pW-PAD_H*2f, ROW_H); cy += ROW_H;
+                ER("Entrada:", _ultimaEntrada.ToString("0.00"), dxCian); cy += ROW_H;
+                if (!double.IsNaN(_ultimaAVWAP)) { ER(refLblDx, _ultimaAVWAP.ToString("0.00")+refSufDx, dxGris); cy += ROW_H; }
+                if (!double.IsNaN(_ultimaStop))  { ER("Stop:",  _ultimaStop.ToString("0.00")+"  ("+(alc?"-":"+")+_ultimaStopPts.ToString("0.00")+" pts)", dxRojo); cy += ROW_H; }
+                if (!double.IsNaN(_ultimaT1))    { ER("T1:", _ultimaT1.ToString("0.00")+"  ("+(alc?"+":"-")+_ultimaT1Pts.ToString("0.00")+" pts)  R:R "+_ultimaRR1.ToString("0.1"), dxVerde); cy += ROW_H; }
+                if (!double.IsNaN(_ultimaT2))    { ER("T2:", _ultimaT2.ToString("0.00")+"  ("+(alc?"+":"-")+_ultimaT2Pts.ToString("0.00")+" pts)  R:R "+_ultimaRR2.ToString("0.1"), dxNaranja); cy += ROW_H; }
                 cy += SEC_GAP;
             }
 
             if (Mostrar_Keltner)
             {
-                if (Mostrar_Semaforo || Mostrar_Senales || (Mostrar_Entrada && esV)) { Sp(px+PAD_H, cy); cy += ROW_H; }
+                if (Mostrar_Semaforo || Mostrar_Senales || mostrarEntradaPanel) { Sp(px+PAD_H, cy); cy += ROW_H; }
                 Hd("-- Keltner Stop / Target --"); cy += ROW_H;
                 KR("Width:", k_bandWidth.ToString("0.00")+" pts", dxCian); cy += ROW_H;
                 KR("Stop "+(Kelt_StopPct*100).ToString("0")+"%:", k_stopPts.ToString("0.00")+" pts  "+k_stopTks.ToString("0")+" tks  $"+k_stopUsd.ToString("0.00"), dxRojo); cy += ROW_H;
@@ -1176,6 +1403,42 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
 
         [NinjaScriptProperty][Range(1,60)][Display(Name="Actualizar cada N segundos",Order=3,GroupName="1. Posicion")]
         public int Pos_UpdateSeg { get; set; }
+
+        // 1b. Logging
+        [NinjaScriptProperty][Display(Name="Registrar señales en CSV", Order=4, GroupName="1. Posicion")] 
+        public bool RegistrarSenales { get; set; }
+        [NinjaScriptProperty][Display(Name="Ruta carpeta logs", Order=5, GroupName="1. Posicion")] 
+        public string RutaLog { get; set; }
+        [NinjaScriptProperty][Display(Name="Nombre archivo CSV", Order=6, GroupName="1. Posicion")] 
+        public string NombreArchivoLog { get; set; }
+        [NinjaScriptProperty][Display(Name="Loggear tambien historico", Order=7, GroupName="1. Posicion")] 
+        public bool LoggearHistorico { get; set; }
+
+        // 1c. Alertas
+        [NinjaScriptProperty][Display(Name="Alerta 4/4 senales", Order=1, GroupName="8. Alertas")] 
+        public bool Alerta4de4 { get; set; }
+        [NinjaScriptProperty][Display(Name="Sonido 4/4", Order=2, GroupName="8. Alertas")] 
+        public string Sonido4de4 { get; set; }
+        [NinjaScriptProperty][Display(Name="Alerta Zona A", Order=3, GroupName="8. Alertas")] 
+        public bool AlertaZonaA { get; set; }
+        [NinjaScriptProperty][Display(Name="Sonido Zona A", Order=4, GroupName="8. Alertas")] 
+        public string SonidoZonaA { get; set; }
+
+        // 1d. V5 Optimización
+        [NinjaScriptProperty][Display(Name="Usar Capa 3 (AVWAP vs Keltner BM)", Order=0, GroupName="9. V5 Optimizacion", Description="Si true, el semaforo verde con zona A/A+ requiere que AVWAP este sobre/bajo la banda media Keltner.")] 
+        public bool UsarCapa3 { get; set; }
+        [NinjaScriptProperty][Display(Name="Usar Capa 4 (LinReg89 vs Keltner BM)", Order=1, GroupName="9. V5 Optimizacion", Description="Si true, el semaforo verde con zona LR/LR+ requiere que LinReg89 este sobre/bajo la banda media Keltner.")] 
+        public bool UsarCapa4 { get; set; }
+        [NinjaScriptProperty][Display(Name="Usar Stop Keltner (30%)", Order=2, GroupName="9. V5 Optimizacion", Description="Si true usa 30% ancho Keltner, si false usa ATR")] 
+        public bool UsarStopKeltner { get; set; }
+        [NinjaScriptProperty][Display(Name="Filtro Apertura", Order=3, GroupName="9. V5 Optimizacion", Description="Requiere ancho Keltner > X*ATR")] 
+        public bool FiltroApertura { get; set; }
+        [NinjaScriptProperty][Range(1,5)][Display(Name="Min Keltner vs ATR", Order=4, GroupName="9. V5 Optimizacion")] 
+        public double MinKeltnerVsATR { get; set; }
+        [NinjaScriptProperty][Display(Name="Esperar confirmacion", Order=5, GroupName="9. V5 Optimizacion")] 
+        public bool EsperarConfirmacion { get; set; }
+        [NinjaScriptProperty][Range(1,5)][Display(Name="Barras confirmacion", Order=6, GroupName="9. V5 Optimizacion")] 
+        public int BarrasConfirmacion { get; set; }
 
         // 2. Secciones semaforo
         [NinjaScriptProperty][Display(Name="Semaforo",                    Order=1,GroupName="2. Secciones")] public bool Mostrar_Semaforo { get; set; }
@@ -1221,18 +1484,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private EduS_Trader.EduS_MasterPanel_HUD_V2[] cacheEduS_MasterPanel_HUD_V2;
-		public EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
+		public EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool registrarSenales, string rutaLog, string nombreArchivoLog, bool loggearHistorico, bool alerta4de4, string sonido4de4, bool alertaZonaA, string sonidoZonaA, bool usarCapa3, bool usarCapa4, bool usarStopKeltner, bool filtroApertura, double minKeltnerVsATR, bool esperarConfirmacion, int barrasConfirmacion, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
 		{
-			return EduS_MasterPanel_HUD_V2(Input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
+			return EduS_MasterPanel_HUD_V2(Input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, registrarSenales, rutaLog, nombreArchivoLog, loggearHistorico, alerta4de4, sonido4de4, alertaZonaA, sonidoZonaA, usarCapa3, usarCapa4, usarStopKeltner, filtroApertura, minKeltnerVsATR, esperarConfirmacion, barrasConfirmacion, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
 		}
 
-		public EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(ISeries<double> input, bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
+		public EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(ISeries<double> input, bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool registrarSenales, string rutaLog, string nombreArchivoLog, bool loggearHistorico, bool alerta4de4, string sonido4de4, bool alertaZonaA, string sonidoZonaA, bool usarCapa3, bool usarCapa4, bool usarStopKeltner, bool filtroApertura, double minKeltnerVsATR, bool esperarConfirmacion, int barrasConfirmacion, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
 		{
 			if (cacheEduS_MasterPanel_HUD_V2 != null)
 				for (int idx = 0; idx < cacheEduS_MasterPanel_HUD_V2.Length; idx++)
-					if (cacheEduS_MasterPanel_HUD_V2[idx] != null && cacheEduS_MasterPanel_HUD_V2[idx].Ventana_Flotante == ventana_Flotante && cacheEduS_MasterPanel_HUD_V2[idx].Ventana_Compartida == ventana_Compartida && cacheEduS_MasterPanel_HUD_V2[idx].Hud_X == hud_X && cacheEduS_MasterPanel_HUD_V2[idx].Hud_Y == hud_Y && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_En_Chart == mostrar_En_Chart && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Posicion == mostrar_Posicion && cacheEduS_MasterPanel_HUD_V2[idx].AccountName == accountName && cacheEduS_MasterPanel_HUD_V2[idx].Pos_UpdateSeg == pos_UpdateSeg && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Semaforo == mostrar_Semaforo && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Senales == mostrar_Senales && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Entrada == mostrar_Entrada && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Keltner == mostrar_Keltner && cacheEduS_MasterPanel_HUD_V2[idx].Period_SMA20 == period_SMA20 && cacheEduS_MasterPanel_HUD_V2[idx].Period_SMA80 == period_SMA80 && cacheEduS_MasterPanel_HUD_V2[idx].Period_LR89 == period_LR89 && cacheEduS_MasterPanel_HUD_V2[idx].SlopeLookback == slopeLookback && cacheEduS_MasterPanel_HUD_V2[idx].AVWAP_SwingPeriod == aVWAP_SwingPeriod && cacheEduS_MasterPanel_HUD_V2[idx].AVWAP_BaseAPT == aVWAP_BaseAPT && cacheEduS_MasterPanel_HUD_V2[idx].ATR_Period == aTR_Period && cacheEduS_MasterPanel_HUD_V2[idx].ZoneVerde == zoneVerde && cacheEduS_MasterPanel_HUD_V2[idx].ZoneAmarilla == zoneAmarilla && cacheEduS_MasterPanel_HUD_V2[idx].Stop_ATRMult == stop_ATRMult && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_Period == kelt_Period && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_Multiplier == kelt_Multiplier && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_StopPct == kelt_StopPct && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_RiskReward == kelt_RiskReward && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_Contracts == kelt_Contracts && cacheEduS_MasterPanel_HUD_V2[idx].Tamano_Bolas == tamano_Bolas && cacheEduS_MasterPanel_HUD_V2[idx].Fondo_Opacidad == fondo_Opacidad && cacheEduS_MasterPanel_HUD_V2[idx].Panel_Posicion == panel_Posicion && cacheEduS_MasterPanel_HUD_V2[idx].Margen_Escala == margen_Escala && cacheEduS_MasterPanel_HUD_V2[idx].EqualsInput(input))
+					if (cacheEduS_MasterPanel_HUD_V2[idx] != null && cacheEduS_MasterPanel_HUD_V2[idx].Ventana_Flotante == ventana_Flotante && cacheEduS_MasterPanel_HUD_V2[idx].Ventana_Compartida == ventana_Compartida && cacheEduS_MasterPanel_HUD_V2[idx].Hud_X == hud_X && cacheEduS_MasterPanel_HUD_V2[idx].Hud_Y == hud_Y && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_En_Chart == mostrar_En_Chart && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Posicion == mostrar_Posicion && cacheEduS_MasterPanel_HUD_V2[idx].AccountName == accountName && cacheEduS_MasterPanel_HUD_V2[idx].Pos_UpdateSeg == pos_UpdateSeg && cacheEduS_MasterPanel_HUD_V2[idx].RegistrarSenales == registrarSenales && cacheEduS_MasterPanel_HUD_V2[idx].RutaLog == rutaLog && cacheEduS_MasterPanel_HUD_V2[idx].NombreArchivoLog == nombreArchivoLog && cacheEduS_MasterPanel_HUD_V2[idx].LoggearHistorico == loggearHistorico && cacheEduS_MasterPanel_HUD_V2[idx].Alerta4de4 == alerta4de4 && cacheEduS_MasterPanel_HUD_V2[idx].Sonido4de4 == sonido4de4 && cacheEduS_MasterPanel_HUD_V2[idx].AlertaZonaA == alertaZonaA && cacheEduS_MasterPanel_HUD_V2[idx].SonidoZonaA == sonidoZonaA && cacheEduS_MasterPanel_HUD_V2[idx].UsarCapa3 == usarCapa3 && cacheEduS_MasterPanel_HUD_V2[idx].UsarCapa4 == usarCapa4 && cacheEduS_MasterPanel_HUD_V2[idx].UsarStopKeltner == usarStopKeltner && cacheEduS_MasterPanel_HUD_V2[idx].FiltroApertura == filtroApertura && cacheEduS_MasterPanel_HUD_V2[idx].MinKeltnerVsATR == minKeltnerVsATR && cacheEduS_MasterPanel_HUD_V2[idx].EsperarConfirmacion == esperarConfirmacion && cacheEduS_MasterPanel_HUD_V2[idx].BarrasConfirmacion == barrasConfirmacion && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Semaforo == mostrar_Semaforo && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Senales == mostrar_Senales && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Entrada == mostrar_Entrada && cacheEduS_MasterPanel_HUD_V2[idx].Mostrar_Keltner == mostrar_Keltner && cacheEduS_MasterPanel_HUD_V2[idx].Period_SMA20 == period_SMA20 && cacheEduS_MasterPanel_HUD_V2[idx].Period_SMA80 == period_SMA80 && cacheEduS_MasterPanel_HUD_V2[idx].Period_LR89 == period_LR89 && cacheEduS_MasterPanel_HUD_V2[idx].SlopeLookback == slopeLookback && cacheEduS_MasterPanel_HUD_V2[idx].AVWAP_SwingPeriod == aVWAP_SwingPeriod && cacheEduS_MasterPanel_HUD_V2[idx].AVWAP_BaseAPT == aVWAP_BaseAPT && cacheEduS_MasterPanel_HUD_V2[idx].ATR_Period == aTR_Period && cacheEduS_MasterPanel_HUD_V2[idx].ZoneVerde == zoneVerde && cacheEduS_MasterPanel_HUD_V2[idx].ZoneAmarilla == zoneAmarilla && cacheEduS_MasterPanel_HUD_V2[idx].Stop_ATRMult == stop_ATRMult && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_Period == kelt_Period && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_Multiplier == kelt_Multiplier && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_StopPct == kelt_StopPct && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_RiskReward == kelt_RiskReward && cacheEduS_MasterPanel_HUD_V2[idx].Kelt_Contracts == kelt_Contracts && cacheEduS_MasterPanel_HUD_V2[idx].Tamano_Bolas == tamano_Bolas && cacheEduS_MasterPanel_HUD_V2[idx].Fondo_Opacidad == fondo_Opacidad && cacheEduS_MasterPanel_HUD_V2[idx].Panel_Posicion == panel_Posicion && cacheEduS_MasterPanel_HUD_V2[idx].Margen_Escala == margen_Escala && cacheEduS_MasterPanel_HUD_V2[idx].EqualsInput(input))
 						return cacheEduS_MasterPanel_HUD_V2[idx];
-			return CacheIndicator<EduS_Trader.EduS_MasterPanel_HUD_V2>(new EduS_Trader.EduS_MasterPanel_HUD_V2(){ Ventana_Flotante = ventana_Flotante, Ventana_Compartida = ventana_Compartida, Hud_X = hud_X, Hud_Y = hud_Y, Mostrar_En_Chart = mostrar_En_Chart, Mostrar_Posicion = mostrar_Posicion, AccountName = accountName, Pos_UpdateSeg = pos_UpdateSeg, Mostrar_Semaforo = mostrar_Semaforo, Mostrar_Senales = mostrar_Senales, Mostrar_Entrada = mostrar_Entrada, Mostrar_Keltner = mostrar_Keltner, Period_SMA20 = period_SMA20, Period_SMA80 = period_SMA80, Period_LR89 = period_LR89, SlopeLookback = slopeLookback, AVWAP_SwingPeriod = aVWAP_SwingPeriod, AVWAP_BaseAPT = aVWAP_BaseAPT, ATR_Period = aTR_Period, ZoneVerde = zoneVerde, ZoneAmarilla = zoneAmarilla, Stop_ATRMult = stop_ATRMult, Kelt_Period = kelt_Period, Kelt_Multiplier = kelt_Multiplier, Kelt_StopPct = kelt_StopPct, Kelt_RiskReward = kelt_RiskReward, Kelt_Contracts = kelt_Contracts, Tamano_Bolas = tamano_Bolas, Fondo_Opacidad = fondo_Opacidad, Panel_Posicion = panel_Posicion, Margen_Escala = margen_Escala }, input, ref cacheEduS_MasterPanel_HUD_V2);
+			return CacheIndicator<EduS_Trader.EduS_MasterPanel_HUD_V2>(new EduS_Trader.EduS_MasterPanel_HUD_V2(){ Ventana_Flotante = ventana_Flotante, Ventana_Compartida = ventana_Compartida, Hud_X = hud_X, Hud_Y = hud_Y, Mostrar_En_Chart = mostrar_En_Chart, Mostrar_Posicion = mostrar_Posicion, AccountName = accountName, Pos_UpdateSeg = pos_UpdateSeg, RegistrarSenales = registrarSenales, RutaLog = rutaLog, NombreArchivoLog = nombreArchivoLog, LoggearHistorico = loggearHistorico, Alerta4de4 = alerta4de4, Sonido4de4 = sonido4de4, AlertaZonaA = alertaZonaA, SonidoZonaA = sonidoZonaA, UsarCapa3 = usarCapa3, UsarCapa4 = usarCapa4, UsarStopKeltner = usarStopKeltner, FiltroApertura = filtroApertura, MinKeltnerVsATR = minKeltnerVsATR, EsperarConfirmacion = esperarConfirmacion, BarrasConfirmacion = barrasConfirmacion, Mostrar_Semaforo = mostrar_Semaforo, Mostrar_Senales = mostrar_Senales, Mostrar_Entrada = mostrar_Entrada, Mostrar_Keltner = mostrar_Keltner, Period_SMA20 = period_SMA20, Period_SMA80 = period_SMA80, Period_LR89 = period_LR89, SlopeLookback = slopeLookback, AVWAP_SwingPeriod = aVWAP_SwingPeriod, AVWAP_BaseAPT = aVWAP_BaseAPT, ATR_Period = aTR_Period, ZoneVerde = zoneVerde, ZoneAmarilla = zoneAmarilla, Stop_ATRMult = stop_ATRMult, Kelt_Period = kelt_Period, Kelt_Multiplier = kelt_Multiplier, Kelt_StopPct = kelt_StopPct, Kelt_RiskReward = kelt_RiskReward, Kelt_Contracts = kelt_Contracts, Tamano_Bolas = tamano_Bolas, Fondo_Opacidad = fondo_Opacidad, Panel_Posicion = panel_Posicion, Margen_Escala = margen_Escala }, input, ref cacheEduS_MasterPanel_HUD_V2);
 		}
 	}
 }
@@ -1241,14 +1504,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
+		public Indicators.EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool registrarSenales, string rutaLog, string nombreArchivoLog, bool loggearHistorico, bool alerta4de4, string sonido4de4, bool alertaZonaA, string sonidoZonaA, bool usarCapa3, bool usarCapa4, bool usarStopKeltner, bool filtroApertura, double minKeltnerVsATR, bool esperarConfirmacion, int barrasConfirmacion, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
 		{
-			return indicator.EduS_MasterPanel_HUD_V2(Input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
+			return indicator.EduS_MasterPanel_HUD_V2(Input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, registrarSenales, rutaLog, nombreArchivoLog, loggearHistorico, alerta4de4, sonido4de4, alertaZonaA, sonidoZonaA, usarCapa3, usarCapa4, usarStopKeltner, filtroApertura, minKeltnerVsATR, esperarConfirmacion, barrasConfirmacion, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
 		}
 
-		public Indicators.EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(ISeries<double> input , bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
+		public Indicators.EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(ISeries<double> input , bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool registrarSenales, string rutaLog, string nombreArchivoLog, bool loggearHistorico, bool alerta4de4, string sonido4de4, bool alertaZonaA, string sonidoZonaA, bool usarCapa3, bool usarCapa4, bool usarStopKeltner, bool filtroApertura, double minKeltnerVsATR, bool esperarConfirmacion, int barrasConfirmacion, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
 		{
-			return indicator.EduS_MasterPanel_HUD_V2(input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
+			return indicator.EduS_MasterPanel_HUD_V2(input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, registrarSenales, rutaLog, nombreArchivoLog, loggearHistorico, alerta4de4, sonido4de4, alertaZonaA, sonidoZonaA, usarCapa3, usarCapa4, usarStopKeltner, filtroApertura, minKeltnerVsATR, esperarConfirmacion, barrasConfirmacion, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
 		}
 	}
 }
@@ -1257,14 +1520,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
+		public Indicators.EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool registrarSenales, string rutaLog, string nombreArchivoLog, bool loggearHistorico, bool alerta4de4, string sonido4de4, bool alertaZonaA, string sonidoZonaA, bool usarCapa3, bool usarCapa4, bool usarStopKeltner, bool filtroApertura, double minKeltnerVsATR, bool esperarConfirmacion, int barrasConfirmacion, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
 		{
-			return indicator.EduS_MasterPanel_HUD_V2(Input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
+			return indicator.EduS_MasterPanel_HUD_V2(Input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, registrarSenales, rutaLog, nombreArchivoLog, loggearHistorico, alerta4de4, sonido4de4, alertaZonaA, sonidoZonaA, usarCapa3, usarCapa4, usarStopKeltner, filtroApertura, minKeltnerVsATR, esperarConfirmacion, barrasConfirmacion, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
 		}
 
-		public Indicators.EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(ISeries<double> input , bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
+		public Indicators.EduS_Trader.EduS_MasterPanel_HUD_V2 EduS_MasterPanel_HUD_V2(ISeries<double> input , bool ventana_Flotante, bool ventana_Compartida, int hud_X, int hud_Y, bool mostrar_En_Chart, bool mostrar_Posicion, string accountName, int pos_UpdateSeg, bool registrarSenales, string rutaLog, string nombreArchivoLog, bool loggearHistorico, bool alerta4de4, string sonido4de4, bool alertaZonaA, string sonidoZonaA, bool usarCapa3, bool usarCapa4, bool usarStopKeltner, bool filtroApertura, double minKeltnerVsATR, bool esperarConfirmacion, int barrasConfirmacion, bool mostrar_Semaforo, bool mostrar_Senales, bool mostrar_Entrada, bool mostrar_Keltner, int period_SMA20, int period_SMA80, int period_LR89, int slopeLookback, int aVWAP_SwingPeriod, int aVWAP_BaseAPT, int aTR_Period, double zoneVerde, double zoneAmarilla, double stop_ATRMult, int kelt_Period, double kelt_Multiplier, double kelt_StopPct, double kelt_RiskReward, int kelt_Contracts, int tamano_Bolas, int fondo_Opacidad, int panel_Posicion, int margen_Escala)
 		{
-			return indicator.EduS_MasterPanel_HUD_V2(input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
+			return indicator.EduS_MasterPanel_HUD_V2(input, ventana_Flotante, ventana_Compartida, hud_X, hud_Y, mostrar_En_Chart, mostrar_Posicion, accountName, pos_UpdateSeg, registrarSenales, rutaLog, nombreArchivoLog, loggearHistorico, alerta4de4, sonido4de4, alertaZonaA, sonidoZonaA, usarCapa3, usarCapa4, usarStopKeltner, filtroApertura, minKeltnerVsATR, esperarConfirmacion, barrasConfirmacion, mostrar_Semaforo, mostrar_Senales, mostrar_Entrada, mostrar_Keltner, period_SMA20, period_SMA80, period_LR89, slopeLookback, aVWAP_SwingPeriod, aVWAP_BaseAPT, aTR_Period, zoneVerde, zoneAmarilla, stop_ATRMult, kelt_Period, kelt_Multiplier, kelt_StopPct, kelt_RiskReward, kelt_Contracts, tamano_Bolas, fondo_Opacidad, panel_Posicion, margen_Escala);
 		}
 	}
 }
