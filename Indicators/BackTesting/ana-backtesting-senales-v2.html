@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EduS Trader · Backtesting Señales</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#f8fafc; --card:#ffffff; --border:#e2e8f0; --text:#334155; --muted:#64748b;
+  --accent:#0ea5e9; --accent-2:#0284c7; --accent-light:#e0f2fe;
+  --green:#16a34a; --green-bg:#dcfce7; --green-text:#166534;
+  --red:#dc2626; --red-bg:#fee2e2; --red-text:#991b1b;
+  --shadow:0 1px 2px rgba(0,0,0,.04),0 4px 12px rgba(0,0,0,.06);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+.container{max-width:1500px;margin:0 auto;padding:28px 20px 80px}
+
+/* HEADER */
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px}
+.avatar{width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid #e0f2fe;box-shadow:0 4px 12px rgba(14,165,233,.25)}
+h1{font-size:26px;letter-spacing:-.02em;margin:0;font-weight:800}
+.subtitle{color:var(--muted);font-size:13px;margin-top:2px}
+.badge{background:var(--accent-light);color:#0369a1;padding:5px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.02em}
+
+/* FILTERS */
+.filters-card{background:var(--card);border:1px solid var(--border);border-radius:20px;box-shadow:var(--shadow);padding:18px;margin-bottom:18px}
+.filters-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:12px}
+@media(max-width:1200px){.filters-grid{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:760px){.filters-grid{grid-template-columns:repeat(2,1fr)}}
+label{display:block;font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+select,input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:white;font-size:14px;color:var(--text);outline:none;transition:.15s}
+select:focus,input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
+
+/* METRICS */
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:20px}
+.metric{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px 16px;box-shadow:var(--shadow);position:relative;overflow:hidden;transition:transform .15s}
+.metric:hover{transform:translateY(-2px)}
+.metric::before{content:'';position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,#7dd3fc,#0ea5e9)}
+.metric.adv::before{background:linear-gradient(90deg,#a78bfa,#7c3aed)}
+.metric.danger::before{background:linear-gradient(90deg,#fca5a5,#dc2626)}
+.metric-title{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+.metric-value{font-size:22px;font-weight:800;letter-spacing:-.02em;margin-top:6px;line-height:1}
+.metric-sub{font-size:11px;color:var(--muted);margin-top:4px}
+
+/* SECTION TITLES */
+.section-title{font-size:13px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:28px 0 12px;display:flex;align-items:center;gap:8px}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* CHARTS GRID */
+.charts-grid{display:grid;gap:16px;margin-bottom:16px}
+.charts-grid.cols2{grid-template-columns:1fr 1fr}
+.charts-grid.cols3{grid-template-columns:2fr 1fr 1fr}
+@media(max-width:900px){.charts-grid.cols2,.charts-grid.cols3{grid-template-columns:1fr}}
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:20px;box-shadow:var(--shadow);padding:20px;display:flex;flex-direction:column;gap:12px}
+.chart-card h3{margin:0;font-size:14px;font-weight:800;color:var(--text);letter-spacing:-.01em}
+.chart-card .chart-sub{font-size:12px;color:var(--muted);margin-top:-8px}
+.chart-wrap{position:relative;flex:1;min-height:220px}
+.chart-wrap.tall{min-height:300px}
+
+/* ZONA STATS TABLE */
+.zona-stats{width:100%;border-collapse:collapse;font-size:13px;margin-top:4px}
+.zona-stats th{background:#f1f5f9;color:#475569;font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);font-weight:700}
+.zona-stats td{padding:9px 12px;border-bottom:1px solid #f1f5f9;font-variant-numeric:tabular-nums}
+.zona-stats tr:last-child td{border-bottom:none}
+.zona-stats .eff-bar{display:flex;align-items:center;gap:6px}
+.zona-stats .bar-track{flex:1;height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden}
+.zona-stats .bar-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,#34d399,#059669)}
+.zona-stats .bar-fill.low{background:linear-gradient(90deg,#fca5a5,#dc2626)}
+.zona-stats .eff-pct{font-weight:700;font-size:12px;min-width:36px}
+
+/* HEATMAP */
+.heatmap-wrap{overflow-x:auto}
+.heatmap{border-collapse:collapse;font-size:11px;min-width:520px}
+.heatmap th{padding:5px 8px;color:var(--muted);font-weight:700;text-align:center;font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+.heatmap td{width:48px;height:36px;text-align:center;border-radius:6px;font-weight:700;font-size:11px;transition:opacity .2s;cursor:default}
+.heatmap td.empty-cell{background:#f8fafc;color:#cbd5e1}
+.heatmap .row-label{text-align:right;padding-right:10px;color:var(--muted);font-weight:600;white-space:nowrap;font-size:11px}
+
+/* TABLE */
+.table-card{background:var(--card);border:1px solid var(--border);border-radius:20px;box-shadow:var(--shadow);overflow:hidden}
+.table-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:linear-gradient(to bottom,#fff,#fbfdff)}
+.table-header h2{margin:0;font-size:15px;font-weight:800;letter-spacing:-.01em}
+.table-wrap{overflow:auto;max-height:55vh}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:900px}
+thead th{position:sticky;top:0;background:#f1f5f9;z-index:1;color:#475569;font-weight:700;text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+tbody td{padding:10px 12px;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+tbody tr:hover{background:#f8fafc}
+tr.win td{background:#f0fdf4}
+tr.loss td{background:#fff5f5}
+.dir{font-weight:700;font-size:11px;padding:3px 8px;border-radius:8px;display:inline-block}
+.dir-long{background:#dcfce7;color:#15803d}
+.dir-short{background:#fee2e2;color:#b91c1c}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.pill{font-size:11px;padding:3px 8px;border-radius:999px;background:#f1f5f9;color:#334155;font-weight:600}
+.zona-tag{font-size:11px;padding:3px 8px;border-radius:6px;font-weight:700;background:#ede9fe;color:#5b21b6}
+
+/* LOADING */
+.loading{position:fixed;inset:0;background:rgba(248,250,252,.92);display:flex;align-items:center;justify-content:center;z-index:50;backdrop-filter:blur(6px)}
+.loading-box{background:white;padding:28px 34px;border-radius:20px;box-shadow:0 20px 40px rgba(2,6,23,.08);border:1px solid var(--border);text-align:center}
+.spinner{width:42px;height:42px;border:3px solid #e0f2fe;border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{margin-top:12px;font-weight:700;color:#0369a1}
+.hint{font-size:12px;color:var(--muted);margin-top:6px}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<div id="loading" class="loading">
+  <div class="loading-box">
+    <div class="spinner"></div>
+    <div class="loading-text">Cargando señales...</div>
+    <div class="hint" id="loading-hint">Leyendo ./senales-edus.csv</div>
+  </div>
+</div>
+
+<div class="container">
+  <header>
+    <div class="brand">
+      <img class="avatar" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgJuV-7IgSRetOyG4Ox2ZfuC-S3PwzaKm7qo3osmZoQAe8qK5-L41uDW7uElDg9Kadg1esBwBheOz95nxNPd2yXT8nCjSVRL3feq4yibCo_sxIoo5BDMtLxYm9P4ap9X8p-kDoZZksnez-SO7zZDwodOjKn8IkRn3P9Sdz8iSnQpgEAkDZGa2QRTfHISt6w/s1024/Gemini_Generated_Image_8eexa18eexa18eex.png" alt="EduS">
+      <div>
+        <h1>EduS Trader</h1>
+        <div class="subtitle">Dashboard de análisis de señales · MasterPanel HUD V2</div>
+      </div>
+    </div>
+    <div class="badge" id="range-badge">—</div>
+  </header>
+
+  <!-- FILTROS -->
+  <div class="filters-card">
+    <div class="filters-grid">
+      <div><label>Mercado</label><select id="mercado"><option value="TODOS">Todos</option></select></div>
+      <div><label>Zona</label><select id="zona"><option value="TODOS">Todas</option></select></div>
+      <div><label>Año</label><select id="anio"><option value="TODOS">Todos</option></select></div>
+      <div><label>Mes</label><select id="mes"><option value="TODOS">Todos</option></select></div>
+      <div><label>Semana</label><select id="semana"><option value="TODOS">Todas</option></select></div>
+      <div><label>Día semana</label><select id="diaSemana"><option value="TODOS">Todos</option></select></div>
+      <div><label>KeltnerWidth Desde</label><input type="number" id="anchoDesde" placeholder="0" step="1"></div>
+      <div><label>KeltnerWidth Hasta</label><input type="number" id="anchoHasta" placeholder="9999" step="1"></div>
+      <div><label>ATR Desde</label><input type="number" id="atrDesde" placeholder="0" step="0.5"></div>
+      <div><label>ATR Hasta</label><input type="number" id="atrHasta" placeholder="999" step="0.5"></div>
+      <div><label>Hora Desde</label><select id="horaDesde"></select></div>
+      <div><label>Hora Hasta</label><select id="horaHasta"></select></div>
+      <div><label>Modo Cierre</label>
+        <select id="modo">
+          <option value="TODO">Todo</option>
+          <option value="SOLO_T1">Solo T1</option>
+          <option value="SOLO_T1_T2">T1 + T2</option>
+        </select>
+      </div>
+      <div><label>Dedup ventana (min)</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" id="ventanaDedup" value="5" min="0" max="120" step="1" style="flex:1">
+          <span style="font-size:11px;color:var(--muted)" id="ventana-label">5 min</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MÉTRICAS BÁSICAS -->
+  <div class="section-title">📊 Métricas generales</div>
+  <div class="metrics">
+    <div class="metric"><div class="metric-title">Trades</div><div class="metric-value" id="m-trades">0</div><div class="metric-sub" id="m-trades-sub">—</div></div>
+    <div class="metric"><div class="metric-title">WinRate %</div><div class="metric-value" id="m-winrate">0%</div><div class="metric-sub" id="m-wins">0W / 0L</div></div>
+    <div class="metric"><div class="metric-title">PnL Total USD</div><div class="metric-value" id="m-pnlusd">$0</div><div class="metric-sub" id="m-pv-hint">—</div></div>
+    <div class="metric"><div class="metric-title">PnL Total Pts</div><div class="metric-value" id="m-pnlpts">0</div><div class="metric-sub">Suma puntos</div></div>
+    <div class="metric"><div class="metric-title">Profit Factor</div><div class="metric-value" id="m-pf">0.00</div><div class="metric-sub">Ganado / Perdido</div></div>
+    <div class="metric"><div class="metric-title">Stop Promedio</div><div class="metric-value" id="m-stop">0</div><div class="metric-sub">pts</div></div>
+    <div class="metric"><div class="metric-title">T1 Tocados</div><div class="metric-value" id="m-t1">0</div><div class="metric-sub" id="m-t1pct">0%</div></div>
+    <div class="metric"><div class="metric-title">T2 Tocados</div><div class="metric-value" id="m-t2">0</div><div class="metric-sub" id="m-t2pct">0%</div></div>
+    <div class="metric"><div class="metric-title">Stop Tocados</div><div class="metric-value" id="m-stopHit">0</div><div class="metric-sub" id="m-stopPct">0%</div></div>
+    <div class="metric"><div class="metric-title">Avg Win USD</div><div class="metric-value" id="m-avgwin">$0</div><div class="metric-sub">por trade</div></div>
+    <div class="metric"><div class="metric-title">Avg Loss USD</div><div class="metric-value" id="m-avgloss">$0</div><div class="metric-sub">por trade</div></div>
+    <div class="metric"><div class="metric-title">KeltnerWidth Avg</div><div class="metric-value" id="m-ancho">0</div><div class="metric-sub">pts real (CSV)</div></div>
+    <div class="metric"><div class="metric-title">ATR Promedio</div><div class="metric-value" id="m-atr-avg">0</div><div class="metric-sub">pts por señal</div></div>
+  </div>
+
+  <!-- MÉTRICAS AVANZADAS -->
+  <div class="section-title">⚡ Métricas avanzadas</div>
+  <div class="metrics">
+    <div class="metric adv"><div class="metric-title">Drawdown Máx.</div><div class="metric-value" id="m-dd">$0</div><div class="metric-sub" id="m-dd-sub">—</div></div>
+    <div class="metric danger"><div class="metric-title">Racha Pérdidas</div><div class="metric-value" id="m-streak">0</div><div class="metric-sub">consecutivas máx.</div></div>
+    <div class="metric adv"><div class="metric-title">Racha Ganancias</div><div class="metric-value" id="m-wstreak">0</div><div class="metric-sub">consecutivas máx.</div></div>
+    <div class="metric adv"><div class="metric-title">RR Promedio</div><div class="metric-value" id="m-rr-avg">0.00</div><div class="metric-sub">trades ganadores</div></div>
+    <div class="metric adv"><div class="metric-title">Expectativa USD</div><div class="metric-value" id="m-expectativa">$0</div><div class="metric-sub">por trade promedio</div></div>
+    <div class="metric adv"><div class="metric-title">Recovery Factor</div><div class="metric-value" id="m-recovery">0.00</div><div class="metric-sub">PnL / Max DD</div></div>
+  </div>
+
+  <!-- VOLATILIDAD -->
+  <div class="section-title">⚡ Análisis por volatilidad (KeltnerWidth & ATR)</div>
+  <div class="metrics" id="vol-metrics"></div>
+
+  <!-- BREAKEVEN POR ZONA -->
+  <div class="section-title">🎯 Breakeven por zona</div>
+  <div class="metrics" id="breakeven-metrics"></div>
+
+  <!-- CURVA DE EQUITY -->
+  <div class="section-title">📈 Curva de Equity</div>
+  <div class="chart-card" style="margin-bottom:16px">
+    <h3>PnL Acumulado en el tiempo</h3>
+    <div class="chart-sub">Evolución del capital por cada trade ejecutado</div>
+    <div class="chart-wrap tall"><canvas id="equityChart"></canvas></div>
+  </div>
+
+  <!-- GRÁFICOS ROW 1: Eficiencia por zona + Direccional -->
+  <div class="section-title">📊 Análisis por zona y dirección</div>
+  <div class="charts-grid cols3" style="margin-bottom:16px">
+    <div class="chart-card">
+      <h3>Eficiencia por Zona de Entrada</h3>
+      <div class="chart-sub">Trades positivos vs negativos por tipo de setup</div>
+      <div class="chart-wrap"><canvas id="zonaChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Long vs Short · Win/Loss</h3>
+      <div class="chart-sub">Distribución de resultados por dirección</div>
+      <div class="chart-wrap" style="display:flex;align-items:center;justify-content:center"><canvas id="dirChart" style="max-width:220px;max-height:220px"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Tabla detalle por zona</h3>
+      <div class="chart-sub">Trades, eficiencia y breakeven</div>
+      <table class="zona-stats" id="zona-stats-table">
+        <thead><tr><th>Zona</th><th>W</th><th>L</th><th>Eficiencia</th><th>BE</th></tr></thead>
+        <tbody id="zona-stats-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- GRÁFICOS ROW 2: PnL semanal + Mapa de calor -->
+  <div class="section-title">🗓 Análisis temporal</div>
+  <div class="charts-grid cols2" style="margin-bottom:16px">
+    <div class="chart-card">
+      <h3>PnL por Semana</h3>
+      <div class="chart-sub">Resultado acumulado semanal en USD</div>
+      <div class="chart-wrap"><canvas id="semanalChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Mapa de Calor · WinRate por Hora y Día</h3>
+      <div class="chart-sub">% de trades ganadores por franja horaria</div>
+      <div class="heatmap-wrap"><table class="heatmap" id="heatmap-table"></table></div>
+    </div>
+  </div>
+
+  <!-- TABLA -->
+  <div class="section-title">📋 Operaciones filtradas</div>
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Detalle de trades</h2>
+      <span class="badge" id="table-count">0 trades</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th><th>Mercado</th><th>Dir</th><th>Zona</th>
+            <th class="num">Entrada</th><th class="num">Stop</th><th class="num">T1</th><th class="num">T2</th>
+            <th>Resultado</th><th class="num">PnL $</th><th class="num">PnL pts</th>
+            <th class="num">RR</th><th class="num">Duración</th><th class="num">KeltW</th><th class="num">ATR</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── DATOS DE EJEMPLO CON ZONAS REALES ───────────────────────────────────────
+const SAMPLE_CSV = `Tipo,SignalID,FechaHora,Mercado,Cuenta,Timeframe,Direccion,Estado,Zona,Entrada,Stop,T1,T2,RR1,RR2,FechaCierre,Resultado,T1_Tocado,PrecioSalida,BarrasDuracion
+CIERRA,1001,2024-01-03 09:35,NQ,SIM,5m,LONG,CERRADO,A+,15800,15785,15830,15845,2,3,2024-01-03 10:12,WIN,SI,15845,9
+CIERRA,1002,2024-01-03 11:05,NQ,SIM,5m,SHORT,CERRADO,A,15840,15855,15810,15795,2,3,2024-01-03 11:45,WIN,SI,15810,8
+CIERRA,1003,2024-01-04 09:45,ES,SIM,5m,LONG,CERRADO,LR+,4785.00,4779.00,4797.00,4803.00,2,3,2024-01-04 10:30,STOP,NO,4779,9
+CIERRA,1004,2024-01-04 13:15,ES,SIM,5m,SHORT,CERRADO,A+,4802,4808,4790,4784,2,3,2024-01-04 14:02,WIN,SI,4790,10
+CIERRA,1005,2024-01-05 10:10,NQ,SIM,5m,LONG,CERRADO,LR,15920,15905,15950,15965,2,3,2024-01-05 10:55,STOP,NO,15910,9
+CIERRA,1006,2024-01-05 14:30,NQ,SIM,5m,SHORT,CERRADO,A,16010,16025,15980,15965,2,3,2024-01-05 15:05,STOP,NO,16025,7
+CIERRA,1007,2024-01-08 09:50,ES,SIM,5m,LONG,CERRADO,A+,4765,4759,4777,4783,2,3,2024-01-08 10:40,WIN,SI,4777,10
+CIERRA,1008,2024-01-08 11:20,ES,SIM,5m,SHORT,CERRADO,LR+,4778,4784,4766,4760,2,3,2024-01-08 12:01,STOP,NO,4784,8
+CIERRA,1009,2024-01-09 09:15,NQ,SIM,5m,LONG,CERRADO,A,15750,15735,15780,15795,2,3,2024-01-09 09:48,WIN,SI,15768,7
+CIERRA,1010,2024-01-09 13:45,NQ,SIM,5m,SHORT,CERRADO,A+,15890,15905,15860,15845,2,3,2024-01-09 14:20,WIN,SI,15862,7
+CIERRA,1011,2024-01-10 10:00,ES,SIM,5m,LONG,CERRADO,LR,4795,4789,4807,4813,2,3,2024-01-10 10:50,WIN,SI,4800,10
+CIERRA,1012,2024-01-10 15:00,ES,SIM,5m,SHORT,CERRADO,LR+,4810,4816,4798,4792,2,3,2024-01-10 15:35,STOP,NO,4813,7
+CIERRA,1013,2024-01-11 09:40,NQ,SIM,5m,LONG,CERRADO,A+,15980,15965,16010,16025,2,3,2024-01-11 10:22,STOP,NO,15965,8
+CIERRA,1014,2024-01-11 11:30,NQ,SIM,5m,SHORT,CERRADO,A,16030,16045,16000,15985,2,3,2024-01-11 12:10,WIN,SI,16008,8
+CIERRA,1015,2024-01-12 10:20,ES,SIM,5m,LONG,CERRADO,LR+,4750,4744,4762,4768,2,3,2024-01-12 11:05,STOP,NO,4744,9
+CIERRA,1016,2024-01-12 13:10,ES,SIM,5m,SHORT,CERRADO,A+,4765,4771,4753,4747,2,3,2024-01-12 13:55,WIN,SI,4755,9
+CIERRA,1017,2024-01-15 09:25,NQ,SIM,5m,LONG,CERRADO,LR,16100,16085,16130,16145,2,3,2024-01-15 10:05,WIN,SI,16125,8
+CIERRA,1018,2024-01-15 14:15,NQ,SIM,5m,SHORT,CERRADO,A,16150,16165,16120,16105,2,3,2024-01-15 14:48,STOP,NO,16165,7
+CIERRA,1019,2024-01-16 09:30,ES,SIM,5m,LONG,CERRADO,A+,4820,4814,4832,4838,2,3,2024-01-16 10:15,WIN,SI,4832,9
+CIERRA,1020,2024-01-16 13:00,NQ,SIM,5m,SHORT,CERRADO,LR+,16200,16215,16170,16155,2,3,2024-01-16 13:40,WIN,SI,16170,8
+CIERRA,1021,2024-01-17 09:45,NQ,SIM,5m,LONG,CERRADO,A,16250,16235,16280,16295,2,3,2024-01-17 10:30,STOP,NO,16235,9
+CIERRA,1022,2024-01-17 14:00,ES,SIM,5m,SHORT,CERRADO,LR,4835,4841,4823,4817,2,3,2024-01-17 14:45,WIN,SI,4823,10
+CIERRA,1023,2024-01-18 10:00,NQ,SIM,5m,LONG,CERRADO,LR+,16300,16285,16330,16345,2,3,2024-01-18 10:50,WIN,SI,16330,10
+CIERRA,1024,2024-01-18 13:30,ES,SIM,5m,SHORT,CERRADO,A+,4850,4856,4838,4832,2,3,2024-01-18 14:10,STOP,NO,4856,8`;
+
+// ── CHARTS ───────────────────────────────────────────────────────────────────
+let charts = {};
+
+function destroyChart(id){
+  if(charts[id]){ charts[id].destroy(); delete charts[id]; }
+}
+
+// ── POINT VALUE CORRECTO (micros primero para evitar false match) ─────────
+function getPointValue(mkt){
+  const m = mkt.toUpperCase();
+  if(m.includes('MNQ')) return 2;
+  if(m.includes('MES')) return 5;
+  if(m.includes('NQ'))  return 20;
+  if(m.includes('ES'))  return 50;
+  if(m.includes('GC'))  return 100;
+  if(m.includes('CL'))  return 1000;
+  if(m.includes('6E'))  return 125000;
+  return 1;
+}
+
+// ── PARSERS ──────────────────────────────────────────────────────────────────
+function parseCSV(text){
+  const lines = text.split(/\r?\n/).filter(l=>l.trim());
+  const headers = lines[0].split(',').map(h=>h.trim());
+  return lines.slice(1).map(line=>{
+    const values=[]; let cur='', inQ=false;
+    for(let ch of line){ if(ch==='"'){inQ=!inQ}else if(ch===','&&!inQ){values.push(cur);cur=''}else{cur+=ch} }
+    values.push(cur);
+    const o={}; headers.forEach((h,i)=>o[h]=(values[i]||'').trim()); return o;
+  });
+}
+
+function toNum(v){ const n=parseFloat(String(v).replace(',','.')); return isNaN(n)?0:n; }
+
+function parseFecha(f){
+  if(!f) return new Date(NaN);
+  const iso = f.replace(' ','T');
+  const d = new Date(iso);
+  return isNaN(d) ? new Date(NaN) : d;
+}
+
+function getWeekNumber(d){
+  d = new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
+  const day = d.getUTCDay()||7;
+  d.setUTCDate(d.getUTCDate()+4-day);
+  const ys = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+  return Math.ceil((((d-ys)/86400000)+1)/7);
+}
+
+// ── ESTADO GLOBAL ─────────────────────────────────────────────────────────
+let allTrades = [];
+
+// ── CARGA DE DATOS ───────────────────────────────────────────────────────────
+async function loadData(){
+  let csvUrl = './senales-edus.csv';
+  try{
+    const cfgRes = await fetch('./config.json',{cache:'no-store'});
+    if(cfgRes.ok){ const cfg=await cfgRes.json(); if(cfg.csvUrl) csvUrl=cfg.csvUrl; }
+  }catch(e){}
+
+  let csvText='';
+  try{
+    const res = await fetch(csvUrl,{cache:'no-store'});
+    if(!res.ok) throw new Error('no disponible');
+    csvText = await res.text();
+    document.getElementById('loading-hint').textContent = '✓ CSV cargado: '+csvUrl;
+  }catch(e){
+    csvText = SAMPLE_CSV;
+    document.getElementById('loading-hint').textContent = '⚠ Usando datos de ejemplo (CSV no encontrado)';
+  }
+
+  const rows = parseCSV(csvText);
+
+  // Merge ABRE + CIERRA por SignalID
+  const map={};
+  rows.forEach(r=>{
+    const id=r.SignalID||Math.random();
+    if(!map[id]) map[id]={};
+    const t=(r.Tipo||'').toUpperCase();
+    if(t==='ABRE') map[id].abre=r; else map[id].cierra=r;
+  });
+  const mergedRows = Object.values(map).map(p=>({...p.abre,...p.cierra})).filter(r=>r.Entrada&&r.PrecioSalida);
+  const sourceRows = mergedRows.length ? mergedRows : rows;
+
+  const trades = sourceRows.map(r=>{
+    const entrada=toNum(r.Entrada), stop=toNum(r.Stop), salida=toNum(r.PrecioSalida);
+    const t1=toNum(r.T1), t2=toNum(r.T2);
+    const dir=(r.Direccion||'').toUpperCase();
+    const isShort = dir.includes('SHORT')||dir.includes('CORTO')||dir.includes('VENTA')||dir==='S';
+    const isLong = !isShort;
+    const stopDist = Math.abs(entrada-stop);
+    const pnlPts = isLong ? (salida-entrada) : (entrada-salida);
+    const mult = getPointValue(r.Mercado||'');
+    const pnlUsd = pnlPts*mult;
+    const keltnerWidth = toNum(r.KeltnerWidth) || (stopDist>0 ? stopDist/0.3 : 0);
+    const atr = toNum(r.ATR);
+    const ancho = keltnerWidth;
+    const dt = parseFecha(r.FechaHora||r.FechaCierre||'');
+    const dtCierre = parseFecha(r.FechaCierre||'');
+    const horaDec = isNaN(dt) ? 0 : dt.getHours()+dt.getMinutes()/60;
+    const t1toc = ['1','SI','YES','TRUE','S'].includes((r.T1_Tocado||'').toUpperCase());
+    const t2toc = isLong ? salida>=t2-0.01 : salida<=t2+0.01;
+    const stopHit = (r.Resultado||'').toUpperCase().includes('STOP') || pnlPts <= -stopDist*0.9;
+    const rr = stopDist>0 ? pnlPts/stopDist : 0;
+    const duracionMin = (dt&&dtCierre&&!isNaN(dt)&&!isNaN(dtCierre))
+      ? Math.round((dtCierre-dt)/60000)
+      : toNum(r.BarrasDuracion)*5;
+    const anio = isNaN(dt)?0:dt.getFullYear();
+    const mes  = isNaN(dt)?0:dt.getMonth()+1;
+    const diaSemana = isNaN(dt)?0:dt.getDay();
+    const semana = isNaN(dt)?0:getWeekNumber(dt);
+    const semKey = isNaN(dt)?'':dt.getFullYear()+'W'+String(semana).padStart(2,'0');
+    return {
+      fechaHora:r.FechaHora||r.FechaCierre, dt, dtCierre, horaDec,
+      mercado:r.Mercado||'—', direccion:dir, isLong,
+      zona:r.Zona||'—',
+      entrada, stop, t1, t2, precioSalida:salida,
+      resultado:r.Resultado||(pnlUsd>0?'WIN':'LOSS'),
+      pnlPts, pnlUsd, stopDist, ancho, keltnerWidth, atr, t1toc, t2toc, stopHit,
+      signalId:r.SignalID, rr, duracion:duracionMin,
+      anio, mes, semana, semKey, diaSemana, mult
+    };
+  }).filter(t=>t.entrada&&t.precioSalida);
+
+  // Dedup capa 1: misma firma FechaHora+Mercado+Dir
+  const firmasSet = new Set();
+  const tradesUnicos = [];
+  for(const t of trades){
+    const f = `${t.fechaHora}_${t.mercado}_${t.direccion}`;
+    if(!firmasSet.has(f)){ firmasSet.add(f); tradesUnicos.push(t); }
+  }
+  allTrades = tradesUnicos.sort((a,b)=>a.dt-b.dt);
+
+  initFilters();
+  update();
+  document.getElementById('loading').style.display='none';
+}
+
+// ── INIT FILTROS ─────────────────────────────────────────────────────────────
+function initFilters(){
+  const fill = (id,items)=>{
+    const sel=document.getElementById(id);
+    items.forEach(v=>{ const o=document.createElement('option');o.value=v.val;o.textContent=v.lbl;sel.appendChild(o); });
+  };
+  fill('mercado',[...new Set(allTrades.map(t=>t.mercado))].sort().map(v=>({val:v,lbl:v})));
+  fill('zona',[...new Set(allTrades.map(t=>t.zona))].sort().map(v=>({val:v,lbl:v})));
+  fill('anio',[...new Set(allTrades.map(t=>t.anio))].sort().map(v=>({val:v,lbl:v})));
+  const meses=['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  for(let i=1;i<=12;i++) fill('mes',[{val:i,lbl:meses[i]}]);
+  fill('semana',[...new Set(allTrades.map(t=>t.semana))].sort((a,b)=>a-b).map(v=>({val:v,lbl:'Sem '+v})));
+  const dias=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  dias.forEach((n,i)=>fill('diaSemana',[{val:i,lbl:n}]));
+
+  const hd=document.getElementById('horaDesde'), hh=document.getElementById('horaHasta');
+  hd.innerHTML=''; hh.innerHTML='';
+  for(let h=0;h<24;h++) for(const m of[0,30]){
+    const v=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+    hd.innerHTML+=`<option value="${v}">${v}</option>`;
+    hh.innerHTML+=`<option value="${v}">${v}</option>`;
+  }
+  hd.value='00:00'; hh.value='23:30';
+
+  ['mercado','zona','anio','mes','semana','diaSemana','anchoDesde','anchoHasta','atrDesde','atrHasta','horaDesde','horaHasta','modo','ventanaDedup']
+    .forEach(id=>document.getElementById(id).addEventListener('input',update));
+  document.getElementById('ventanaDedup').addEventListener('input',function(){
+    document.getElementById('ventana-label').textContent=(this.value||0)+' min';
+  });
+
+  const first=allTrades[0]?.dt, last=allTrades[allTrades.length-1]?.dt;
+  if(first&&last){
+    const fmt=d=>d.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'});
+    document.getElementById('range-badge').textContent=`${fmt(first)} → ${fmt(last)} · ${allTrades.length} señales`;
+  }
+}
+
+function parseHM(s){ if(!s) return 0; const [h,m]=s.split(':').map(Number); return h+m/60; }
+
+// ── UPDATE PRINCIPAL ─────────────────────────────────────────────────────────
+function update(){
+  const fM  = document.getElementById('mercado').value;
+  const fZ  = document.getElementById('zona').value;
+  const fA  = document.getElementById('anio').value;
+  const fMes= document.getElementById('mes').value;
+  const fSem= document.getElementById('semana').value;
+  const fDia= document.getElementById('diaSemana').value;
+  const aD  = parseFloat(document.getElementById('anchoDesde').value);
+  const aH  = parseFloat(document.getElementById('anchoHasta').value);
+  const aTD = parseFloat(document.getElementById('atrDesde').value);
+  const aTH = parseFloat(document.getElementById('atrHasta').value);
+  const hD  = parseHM(document.getElementById('horaDesde').value);
+  const hH  = parseHM(document.getElementById('horaHasta').value);
+  const modo= document.getElementById('modo').value;
+  const ventanaMin = parseFloat(document.getElementById('ventanaDedup').value)||0;
+  const ventanaMs  = ventanaMin*60*1000;
+
+  const preFiltered = allTrades.filter(t=>{
+    if(fM!=='TODOS' && t.mercado!==fM) return false;
+    if(fZ!=='TODOS' && t.zona!==fZ) return false;
+    if(fA!=='TODOS' && String(t.anio)!==String(fA)) return false;
+    if(fMes!=='TODOS' && String(t.mes)!==String(fMes)) return false;
+    if(fSem!=='TODOS' && String(t.semana)!==String(fSem)) return false;
+    if(fDia!=='TODOS' && String(t.diaSemana)!==String(fDia)) return false;
+    if(!isNaN(aD) && aD>0 && t.keltnerWidth<aD) return false;
+    if(!isNaN(aH) && aH>0 && t.keltnerWidth>aH) return false;
+    if(!isNaN(aTD) && aTD>0 && t.atr<aTD) return false;
+    if(!isNaN(aTH) && aTH>0 && t.atr>aTH) return false;
+    if(t.horaDec<hD || t.horaDec>hH) return false;
+    return true;
+  });
+
+  // Dedup capa 2: ventana configurable por mercado+dirección
+  // NOTA: usa solo mercado+dirección (sin precio) para funcionar correctamente
+  // en gráficas de ticks donde señales consecutivas tienen precios distintos.
+  let filtered;
+  if(ventanaMs<=0){ filtered=preFiltered; }
+  else{
+    filtered=[]; const ultimoPorDir=new Map();
+    for(const t of preFiltered){
+      const firma=`${t.mercado}_${t.direccion}`;
+      const ts=ultimoPorDir.get(firma);
+      if(ts!==undefined && !isNaN(t.dt) && (t.dt-ts)<ventanaMs) continue;
+      ultimoPorDir.set(firma,t.dt); filtered.push(t);
+    }
+  }
+
+  // Aplicar modo cierre
+  const displayTrades = filtered.map(t=>{
+    let ePnlPts=t.pnlPts, ePnlUsd=t.pnlUsd, eResultado=t.resultado, eRR=t.rr;
+    if(modo==='SOLO_T1'){
+      if(t.t1toc){ ePnlPts=Math.abs(t.t1-t.entrada); ePnlUsd=ePnlPts*t.mult; eResultado='T1'; eRR=t.stopDist>0?ePnlPts/t.stopDist:0; }
+      else{ ePnlPts=-t.stopDist; ePnlUsd=ePnlPts*t.mult; eResultado='STOP'; eRR=-1; }
+    } else if(modo==='SOLO_T1_T2'){
+      if(t.t2toc){ ePnlPts=Math.abs(t.t2-t.entrada); ePnlUsd=ePnlPts*t.mult; eResultado='T2'; eRR=t.stopDist>0?ePnlPts/t.stopDist:0; }
+      else if(t.t1toc){ ePnlPts=Math.abs(t.t1-t.entrada); ePnlUsd=ePnlPts*t.mult; eResultado='T1'; eRR=t.stopDist>0?ePnlPts/t.stopDist:0; }
+      else{ ePnlPts=-t.stopDist; ePnlUsd=ePnlPts*t.mult; eResultado='STOP'; eRR=-1; }
+    } else {
+      if(t.stopHit) eResultado='STOP';
+      else if(t.t2toc) eResultado='T2';
+      else if(t.t1toc) eResultado='T1';
+      else eResultado=t.pnlUsd>0?'WIN':'LOSS';
+    }
+    return {...t, ePnlPts, ePnlUsd, eResultado, eRR};
+  });
+
+  // ── MÉTRICAS BÁSICAS ──────────────────────────────────────────────────────
+  const n = displayTrades.length;
+  const wins   = displayTrades.filter(t=>t.ePnlUsd>0);
+  const losses = displayTrades.filter(t=>t.ePnlUsd<=0);
+  const winRate= n ? wins.length/n*100 : 0;
+  const pnlUsd = displayTrades.reduce((s,t)=>s+t.ePnlUsd,0);
+  const pnlPts = displayTrades.reduce((s,t)=>s+t.ePnlPts,0);
+  const sumWin = wins.reduce((s,t)=>s+t.ePnlUsd,0);
+  const sumLoss= losses.reduce((s,t)=>s+t.ePnlUsd,0);
+  const pf     = sumLoss ? Math.abs(sumWin/Math.abs(sumLoss)) : (sumWin>0?Infinity:0);
+  const avgWin = wins.length ? sumWin/wins.length : 0;
+  const avgLoss= losses.length ? sumLoss/losses.length : 0;
+  const stopAvg= n ? displayTrades.reduce((s,t)=>s+t.stopDist,0)/n : 0;
+  const anchoAvg=n ? displayTrades.reduce((s,t)=>s+t.keltnerWidth,0)/n : 0;
+  const atrAvg  =n ? displayTrades.reduce((s,t)=>s+t.atr,0)/n : 0;
+  const t1count= displayTrades.filter(t=>t.t1toc).length;
+  const t2count= displayTrades.filter(t=>t.t2toc).length;
+  const stopsH = displayTrades.filter(t=>t.stopHit).length;
+
+  // ── MÉTRICAS AVANZADAS ───────────────────────────────────────────────────
+  // Drawdown máximo
+  let equity=0, peak=0, maxDD=0, maxDDpct=0;
+  const eqCurve=[];
+  for(const t of displayTrades){
+    equity+=t.ePnlUsd; eqCurve.push(equity);
+    if(equity>peak) peak=equity;
+    const dd=peak-equity;
+    if(dd>maxDD){ maxDD=dd; maxDDpct=peak>0?dd/peak*100:0; }
+  }
+  // Rachas
+  let curStreak=0, maxLStreak=0, curWStreak=0, maxWStreak=0;
+  for(const t of displayTrades){
+    if(t.ePnlUsd<=0){ curStreak++; curWStreak=0; maxLStreak=Math.max(maxLStreak,curStreak); }
+    else{ curWStreak++; curStreak=0; maxWStreak=Math.max(maxWStreak,curWStreak); }
+  }
+  const rrGanadores = wins.length ? wins.reduce((s,t)=>s+t.eRR,0)/wins.length : 0;
+  const expectativa = n ? pnlUsd/n : 0;
+  const recovery    = maxDD>0 ? pnlUsd/maxDD : (pnlUsd>0?Infinity:0);
+
+  // Actualizar DOM métricas básicas
+  const mkts = [...new Set(displayTrades.map(t=>t.mercado))];
+  document.getElementById('m-trades').textContent=n.toLocaleString('es-ES');
+  document.getElementById('m-trades-sub').textContent=mkts.map(m=>m+': '+displayTrades.filter(t=>t.mercado===m).length).join(' · ')||'—';
+  document.getElementById('m-winrate').textContent=winRate.toFixed(1)+'%';
+  document.getElementById('m-wins').textContent=`${wins.length}W / ${losses.length}L`;
+  const uE=document.getElementById('m-pnlusd');
+  uE.textContent=(pnlUsd>=0?'+':'')+'$'+Math.round(pnlUsd).toLocaleString('en-US');
+  uE.style.color=pnlUsd>=0?'#15803d':'#b91c1c';
+  document.getElementById('m-pv-hint').textContent=mkts.map(m=>`${m} $${getPointValue(m)}/pt`).join(' · ')||'—';
+  const pE=document.getElementById('m-pnlpts');
+  pE.textContent=(pnlPts>=0?'+':'')+pnlPts.toFixed(1);
+  pE.style.color=pnlPts>=0?'#15803d':'#b91c1c';
+  document.getElementById('m-pf').textContent=isFinite(pf)?pf.toFixed(2):'∞';
+  document.getElementById('m-stop').textContent=stopAvg.toFixed(2);
+  document.getElementById('m-t1').textContent=t1count;
+  document.getElementById('m-t1pct').textContent=n?(t1count/n*100).toFixed(0)+'%':'0%';
+  document.getElementById('m-t2').textContent=t2count;
+  document.getElementById('m-t2pct').textContent=n?(t2count/n*100).toFixed(0)+'%':'0%';
+  document.getElementById('m-stopHit').textContent=stopsH;
+  document.getElementById('m-stopPct').textContent=n?(stopsH/n*100).toFixed(0)+'%':'0%';
+  document.getElementById('m-avgwin').textContent='$'+Math.round(avgWin).toLocaleString('en-US');
+  document.getElementById('m-avgloss').textContent='$'+Math.round(Math.abs(avgLoss)).toLocaleString('en-US');
+  document.getElementById('m-ancho').textContent=anchoAvg.toFixed(1);
+  document.getElementById('m-atr-avg').textContent=atrAvg.toFixed(2);
+
+  // Actualizar DOM métricas avanzadas
+  const ddEl=document.getElementById('m-dd');
+  ddEl.textContent='-$'+Math.round(maxDD).toLocaleString('en-US');
+  ddEl.style.color=maxDD>0?'#b91c1c':'#15803d';
+  document.getElementById('m-dd-sub').textContent=maxDDpct.toFixed(1)+'% del pico';
+  document.getElementById('m-streak').textContent=maxLStreak;
+  document.getElementById('m-wstreak').textContent=maxWStreak;
+  document.getElementById('m-rr-avg').textContent=rrGanadores.toFixed(2);
+  const expEl=document.getElementById('m-expectativa');
+  expEl.textContent=(expectativa>=0?'+':'')+'$'+Math.round(expectativa).toLocaleString('en-US');
+  expEl.style.color=expectativa>=0?'#15803d':'#b91c1c';
+  document.getElementById('m-recovery').textContent=isFinite(recovery)?recovery.toFixed(2):'∞';
+
+  // ── ANÁLISIS POR VOLATILIDAD ─────────────────────────────────────────────
+  const volContainer=document.getElementById('vol-metrics');
+  volContainer.innerHTML='';
+  if(n>0){
+    const kwVals=displayTrades.map(t=>t.keltnerWidth).filter(v=>v>0).sort((a,b)=>a-b);
+    const atrVals=displayTrades.map(t=>t.atr).filter(v=>v>0).sort((a,b)=>a-b);
+    const kwMed=kwVals.length?kwVals[Math.floor(kwVals.length/2)]:0;
+    const atrMed=atrVals.length?atrVals[Math.floor(atrVals.length/2)]:0;
+    const makeVolCard=(title,trades,sub)=>{
+      const w=trades.filter(t=>t.ePnlUsd>0).length, tot=trades.length;
+      const wr=tot?w/tot*100:0;
+      const pnl=trades.reduce((s,t)=>s+t.ePnlUsd,0);
+      const d=document.createElement('div'); d.className='metric adv';
+      d.innerHTML=`<div class="metric-title">${title}</div>
+        <div class="metric-value" style="font-size:18px;color:${wr>=50?'#15803d':'#b91c1c'}">${wr.toFixed(0)}% WR</div>
+        <div class="metric-sub">${tot} trades · ${sub} · PnL $${Math.round(pnl).toLocaleString('en-US')}</div>`;
+      return d;
+    };
+    if(kwMed>0){
+      volContainer.appendChild(makeVolCard('KeltW Alta (>'+kwMed.toFixed(0)+'pts)',displayTrades.filter(t=>t.keltnerWidth>=kwMed),'canal ancho'));
+      volContainer.appendChild(makeVolCard('KeltW Baja (<'+kwMed.toFixed(0)+'pts)',displayTrades.filter(t=>t.keltnerWidth<kwMed&&t.keltnerWidth>0),'canal estrecho'));
+    }
+    if(atrMed>0){
+      volContainer.appendChild(makeVolCard('ATR Alto (>'+atrMed.toFixed(1)+')',displayTrades.filter(t=>t.atr>=atrMed),'alta volatilidad'));
+      volContainer.appendChild(makeVolCard('ATR Bajo (<'+atrMed.toFixed(1)+')',displayTrades.filter(t=>t.atr<atrMed&&t.atr>0),'baja volatilidad'));
+    }
+  }
+
+  // ── BREAKEVEN POR ZONA ───────────────────────────────────────────────────
+  const zonaOrden=['A+','A','LR+','LR'];
+  const zonasPresentes=[...new Set(displayTrades.map(t=>t.zona))].sort((a,b)=>{
+    const ia=zonaOrden.indexOf(a), ib=zonaOrden.indexOf(b);
+    return (ia===-1?99:ia)-(ib===-1?99:ib);
+  });
+  const beContainer=document.getElementById('breakeven-metrics');
+  beContainer.innerHTML='';
+  zonasPresentes.forEach(z=>{
+    const zt=displayTrades.filter(t=>t.zona===z);
+    if(!zt.length) return;
+    const zw=zt.filter(t=>t.ePnlUsd>0).length;
+    const zl=zt.filter(t=>t.ePnlUsd<=0).length;
+    const avgW=zw?zt.filter(t=>t.ePnlUsd>0).reduce((s,t)=>s+t.ePnlUsd,0)/zw:0;
+    const avgL=zl?Math.abs(zt.filter(t=>t.ePnlUsd<=0).reduce((s,t)=>s+t.ePnlUsd,0)/zl):0;
+    const be  = avgW>0 ? (avgL/avgW).toFixed(2)+' stops/win' : 'N/A';
+    const div=document.createElement('div');
+    div.className='metric adv';
+    div.innerHTML=`<div class="metric-title">Breakeven ${z}</div>
+      <div class="metric-value" style="font-size:16px">${be}</div>
+      <div class="metric-sub">${zw}W ${zl}L · avg $${Math.round(avgW)}/$${Math.round(avgL)}</div>`;
+    beContainer.appendChild(div);
+  });
+
+  // ── TABLA ─────────────────────────────────────────────────────────────────
+  const dedupCount=preFiltered.length-filtered.length;
+  document.getElementById('table-count').textContent=dedupCount>0
+    ?`${n} trades (${dedupCount} dedup omitidos)`:`${n} trades`;
+
+  const tbody=document.getElementById('tbody');
+  if(!displayTrades.length){
+    tbody.innerHTML=`<tr><td colspan="16" class="empty">Sin resultados con los filtros actuales</td></tr>`;
+  } else {
+    tbody.innerHTML=displayTrades.slice().sort((a,b)=>b.dt-a.dt).map(t=>{
+      const win=t.ePnlUsd>0;
+      const fecha=isNaN(t.dt)?'—':t.dt.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})+' '+t.dt.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+      return `<tr class="${win?'win':'loss'}">
+        <td>${fecha}</td>
+        <td><span class="pill">${t.mercado}</span></td>
+        <td><span class="dir ${t.isLong?'dir-long':'dir-short'}">${t.isLong?'LONG':'SHORT'}</span></td>
+        <td><span class="zona-tag">${t.zona}</span></td>
+        <td class="num">${t.entrada.toFixed(2)}</td>
+        <td class="num">${t.stop.toFixed(2)}</td>
+        <td class="num">${t.t1.toFixed(2)}</td>
+        <td class="num">${t.t2.toFixed(2)}</td>
+        <td>${t.eResultado}</td>
+        <td class="num" style="font-weight:700;color:${win?'#166534':'#991b1b'}">${t.ePnlUsd>=0?'+':''}$${Math.round(t.ePnlUsd)}</td>
+        <td class="num">${t.ePnlPts>=0?'+':''}${t.ePnlPts.toFixed(2)}</td>
+        <td class="num">${t.eRR.toFixed(2)}</td>
+        <td class="num">${t.duracion?t.duracion+'m':'—'}</td>
+        <td class="num">${t.keltnerWidth>0?t.keltnerWidth.toFixed(1):'—'}</td>
+        <td class="num" style="color:var(--muted)">${t.atr>0?t.atr.toFixed(2):'—'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── GRÁFICOS ─────────────────────────────────────────────────────────────
+  drawEquity(displayTrades, eqCurve);
+  drawZona(displayTrades, zonaOrden, zonasPresentes);
+  drawDirDonut(displayTrades);
+  drawSemanal(displayTrades);
+  drawHeatmap(displayTrades);
+  drawZonaStatsTable(displayTrades, zonaOrden, zonasPresentes);
+}
+
+// ── CHART: EQUITY ────────────────────────────────────────────────────────────
+function drawEquity(trades, eqCurve){
+  destroyChart('equity');
+  const ctx=document.getElementById('equityChart').getContext('2d');
+  const labels=trades.map((t,i)=>isNaN(t.dt)?'T'+(i+1):t.dt.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'}));
+  const colors=eqCurve.map((v,i)=>i===0?'rgba(14,165,233,1)':v>=eqCurve[i-1]?'rgba(22,163,74,1)':'rgba(220,38,38,1)');
+  charts['equity']=new Chart(ctx,{
+    type:'line',
+    data:{labels,datasets:[{
+      label:'PnL Acumulado USD',
+      data:eqCurve,
+      borderColor:'#0ea5e9',
+      backgroundColor:(ctx)=>{
+        const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height);
+        g.addColorStop(0,'rgba(14,165,233,0.18)');
+        g.addColorStop(1,'rgba(14,165,233,0.01)');
+        return g;
+      },
+      fill:true, tension:0.35, pointRadius:3,
+      pointBackgroundColor:colors, pointBorderColor:colors,
+      borderWidth:2
+    }]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{callbacks:{label:c=>'PnL: $'+Math.round(c.parsed.y).toLocaleString('en-US')}}
+      },
+      scales:{
+        x:{grid:{display:false},ticks:{maxTicksLimit:12,font:{size:10}}},
+        y:{grid:{color:'#f1f5f9'},ticks:{callback:v=>'$'+Math.round(v).toLocaleString('en-US'),font:{size:10}},
+           title:{display:true,text:'USD',font:{size:11}}}
+      }
+    }
+  });
+}
+
+// ── CHART: ZONA EFICIENCIA ───────────────────────────────────────────────────
+function drawZona(trades, zonaOrden, zonasPresentes){
+  destroyChart('zona');
+  const ctx=document.getElementById('zonaChart').getContext('2d');
+  const labels=zonasPresentes;
+  const wins=labels.map(z=>trades.filter(t=>t.zona===z&&t.ePnlUsd>0).length);
+  const losses=labels.map(z=>trades.filter(t=>t.zona===z&&t.ePnlUsd<=0).length);
+  charts['zona']=new Chart(ctx,{
+    type:'bar',
+    data:{labels,datasets:[
+      {label:'Positivos',data:wins,backgroundColor:'rgba(22,163,74,0.75)',borderColor:'#16a34a',borderWidth:1.5,borderRadius:6},
+      {label:'Negativos',data:losses,backgroundColor:'rgba(220,38,38,0.65)',borderColor:'#dc2626',borderWidth:1.5,borderRadius:6}
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{position:'top',labels:{font:{size:11}}},
+        tooltip:{callbacks:{afterBody:items=>{
+          const z=labels[items[0].dataIndex];
+          const w=trades.filter(t=>t.zona===z&&t.ePnlUsd>0).length;
+          const tot=trades.filter(t=>t.zona===z).length;
+          return tot?['Eficiencia: '+(w/tot*100).toFixed(1)+'%']:[];
+        }}}
+      },
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:12,weight:'700'}}},
+        y:{grid:{color:'#f1f5f9'},ticks:{stepSize:1,font:{size:10}},beginAtZero:true}
+      }
+    }
+  });
+}
+
+// ── CHART: DONUT DIR ─────────────────────────────────────────────────────────
+function drawDirDonut(trades){
+  destroyChart('dir');
+  const ctx=document.getElementById('dirChart').getContext('2d');
+  const lw=trades.filter(t=>t.isLong&&t.ePnlUsd>0).length;
+  const ll=trades.filter(t=>t.isLong&&t.ePnlUsd<=0).length;
+  const sw=trades.filter(t=>!t.isLong&&t.ePnlUsd>0).length;
+  const sl=trades.filter(t=>!t.isLong&&t.ePnlUsd<=0).length;
+  charts['dir']=new Chart(ctx,{
+    type:'doughnut',
+    data:{
+      labels:['Long Win','Long Loss','Short Win','Short Loss'],
+      datasets:[{
+        data:[lw,ll,sw,sl],
+        backgroundColor:['rgba(22,163,74,0.85)','rgba(220,38,38,0.65)','rgba(14,165,233,0.85)','rgba(245,158,11,0.65)'],
+        borderColor:['#16a34a','#dc2626','#0ea5e9','#d97706'],
+        borderWidth:2, hoverOffset:8
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:true,
+      cutout:'62%',
+      plugins:{
+        legend:{position:'bottom',labels:{font:{size:11},padding:10}},
+        tooltip:{callbacks:{label:c=>`${c.label}: ${c.parsed} trades`}}
+      }
+    }
+  });
+}
+
+// ── CHART: SEMANAL ───────────────────────────────────────────────────────────
+function drawSemanal(trades){
+  destroyChart('semanal');
+  const ctx=document.getElementById('semanalChart').getContext('2d');
+  const semMap={};
+  trades.forEach(t=>{
+    if(!t.semKey) return;
+    if(!semMap[t.semKey]) semMap[t.semKey]=0;
+    semMap[t.semKey]+=t.ePnlUsd;
+  });
+  const keys=Object.keys(semMap).sort();
+  const vals=keys.map(k=>semMap[k]);
+  charts['semanal']=new Chart(ctx,{
+    type:'bar',
+    data:{labels:keys,datasets:[{
+      label:'PnL USD',
+      data:vals,
+      backgroundColor:vals.map(v=>v>=0?'rgba(22,163,74,0.75)':'rgba(220,38,38,0.65)'),
+      borderColor:vals.map(v=>v>=0?'#16a34a':'#dc2626'),
+      borderWidth:1.5, borderRadius:6
+    }]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:c=>'PnL: $'+Math.round(c.parsed.y).toLocaleString('en-US')}}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:10}}},
+        y:{grid:{color:'#f1f5f9'},ticks:{callback:v=>'$'+Math.round(v),font:{size:10}},
+          title:{display:true,text:'USD',font:{size:11}}}
+      }
+    }
+  });
+}
+
+// ── HEATMAP ─────────────────────────────────────────────────────────────────
+function drawHeatmap(trades){
+  const dias=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  const franjas=[];
+  for(let h=7;h<=20;h++) for(const m of[0,30]) franjas.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
+
+  // Agrupar por dia+franja
+  const grid={}; // [dia][franja] = {w,total}
+  for(let d=0;d<7;d++){ grid[d]={}; franjas.forEach(f=>{grid[d][f]={w:0,tot:0};}); }
+  trades.forEach(t=>{
+    const d=t.diaSemana;
+    const h=t.dt.getHours(), m=t.dt.getMinutes();
+    const mBase=m<30?0:30;
+    const f=`${String(h).padStart(2,'0')}:${String(mBase).padStart(2,'0')}`;
+    if(grid[d]&&grid[d][f]!==undefined){
+      grid[d][f].tot++;
+      if(t.ePnlUsd>0) grid[d][f].w++;
+    }
+  });
+
+  const tbl=document.getElementById('heatmap-table');
+  // Header row: dias
+  let html=`<tr><th></th>${dias.map(d=>`<th>${d}</th>`).join('')}</tr>`;
+  franjas.forEach(f=>{
+    html+=`<tr><td class="row-label">${f}</td>`;
+    for(let d=0;d<7;d++){
+      const cell=grid[d][f];
+      if(!cell||cell.tot===0){ html+=`<td class="empty-cell">—</td>`; continue; }
+      const wr=cell.w/cell.tot;
+      const pct=Math.round(wr*100);
+      // Color: verde escala
+      const r=Math.round(220-wr*170), g=Math.round(60+wr*100), b=Math.round(60+wr*20);
+      const fg=wr>=0.5?'#fff':'#fff';
+      html+=`<td style="background:rgb(${r},${g},${b});color:${fg}" title="${cell.tot} trades · ${pct}% WR">${pct}%</td>`;
+    }
+    html+='</tr>';
+  });
+  tbl.innerHTML=html;
+}
+
+// ── TABLA DETALLE ZONA ───────────────────────────────────────────────────────
+function drawZonaStatsTable(trades, zonaOrden, zonasPresentes){
+  const tbody=document.getElementById('zona-stats-body');
+  tbody.innerHTML=zonasPresentes.map(z=>{
+    const zt=trades.filter(t=>t.zona===z);
+    const w=zt.filter(t=>t.ePnlUsd>0).length;
+    const l=zt.filter(t=>t.ePnlUsd<=0).length;
+    const tot=zt.length;
+    const eff=tot?w/tot:0;
+    const pct=Math.round(eff*100);
+    const avgW=w?zt.filter(t=>t.ePnlUsd>0).reduce((s,t)=>s+t.ePnlUsd,0)/w:0;
+    const avgL=l?Math.abs(zt.filter(t=>t.ePnlUsd<=0).reduce((s,t)=>s+t.ePnlUsd,0)/l):0;
+    const be=avgW>0?(avgL/avgW).toFixed(2):'N/A';
+    return `<tr>
+      <td><strong>${z}</strong></td>
+      <td style="color:#16a34a;font-weight:700">${w}</td>
+      <td style="color:#dc2626;font-weight:700">${l}</td>
+      <td><div class="eff-bar">
+        <div class="bar-track"><div class="bar-fill ${pct<50?'low':''}" style="width:${pct}%"></div></div>
+        <span class="eff-pct" style="color:${pct>=50?'#16a34a':'#dc2626'}">${pct}%</span>
+      </div></td>
+      <td style="font-size:11px;color:var(--muted)">${be}</td>
+    </tr>`;
+  }).join('');
+}
+
+document.addEventListener('DOMContentLoaded', loadData);
+</script>
+</body>
+</html>
