@@ -3152,8 +3152,9 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
 
 
                 // Fix #10: rutas corregidas a los archivos de sonido reales definidos en la carpeta NinjaTrader 8\sounds
-                SonidoGreenZone = System.IO.Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "sounds", "green zone.wav");
-                SonidoInZone = System.IO.Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "sounds", "in zone.wav");
+                SonidoGreenZone = System.IO.Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "..", "sounds", "green zone.wav");
+
+                SonidoInZone = System.IO.Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "..", "sounds", "in zone.wav");
 
                 Senales_OffsetIzq = 100;
                 Senales_FondoColor = Brushes.Transparent;
@@ -3163,12 +3164,6 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
             else if (State == State.Configure)
 
             {
-                // Fix #10b: Si la plantilla o el usuario guardó solo el nombre del archivo sin ruta absoluta, resolver la ruta real:
-                if (!string.IsNullOrEmpty(SonidoGreenZone) && !System.IO.Path.IsPathRooted(SonidoGreenZone))
-                    SonidoGreenZone = System.IO.Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "sounds", SonidoGreenZone);
-
-                if (!string.IsNullOrEmpty(SonidoInZone) && !System.IO.Path.IsPathRooted(SonidoInZone))
-                    SonidoInZone = System.IO.Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "sounds", SonidoInZone);
 
                 _sma20 = new V5_InternalSMA(SMA20_Period);
 
@@ -3501,10 +3496,8 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                     {
 
                         if (!string.IsNullOrEmpty(SonidoGreenZone) && File.Exists(SonidoGreenZone))
-                        {
-                            Alert("V5_GreenZone_" + CurrentBar, Priority.High, "4/4 " + Instrument.FullName + " " + _zonaLabel, SonidoGreenZone, 10, Brushes.Lime, Brushes.Black);
-                            PlaySound(SonidoGreenZone);
-                        }
+
+                            Alert("V5_GreenZone", Priority.High, "4/4 " + Instrument.FullName + " " + _zonaLabel, SonidoGreenZone, 10, Brushes.Lime, Brushes.Black);
 
                         else
 
@@ -3525,10 +3518,8 @@ namespace NinjaTrader.NinjaScript.Indicators.EduS_Trader
                     {
 
                         if (!string.IsNullOrEmpty(SonidoInZone) && File.Exists(SonidoInZone))
-                        {
-                            Alert("V5_InZone_" + CurrentBar, Priority.Medium, "Señal " + _zonaLabel + " " + Instrument.FullName, SonidoInZone, 10, Brushes.Gold, Brushes.Black);
-                            PlaySound(SonidoInZone);
-                        }
+
+                            Alert("V5_InZone", Priority.Medium, "Señal " + _zonaLabel + " " + Instrument.FullName, SonidoInZone, 10, Brushes.Gold, Brushes.Black);
 
                         else
 
